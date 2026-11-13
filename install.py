@@ -1,0 +1,198 @@
+"""로컬 하네스 설치기 (Windows·Mac 공용).
+
+  python install.py              설치 또는 갱신
+  python install.py --dry-run    바꾸지 않고 할 일만 출력
+  python install.py --uninstall  이 하네스가 설치한 것만 제거
+
+설치하는 것
+  ~/.claude/skills/<스킬>          표지 파일(.local-harness)이 있는 폴더만 교체. 같은 이름의 남의 스킬은 건너뜀
+  ~/.claude/hooks/local-harness/   훅 스크립트
+  ~/.claude/CLAUDE.md              표지 주석 사이 블록만 넣거나 교체. 나머지 내용은 그대로
+  ~/.claude/settings.json          훅 연결만 추가. 바꾸기 전에 백업 파일을 만든다
+"""
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+
+REPO = os.path.dirname(os.path.abspath(__file__))
+CLAUDE_HOME = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+MARKER = ".local-harness"
+HOOK_DIR = os.path.join(CLAUDE_HOME, "hooks", "local-harness")
+BLOCK_START = "<!-- local-harness:start (로컬 하네스가 관리하는 블록. 직접 고치면 다음 설치 때 덮어씀) -->"
+BLOCK_END = "<!-- local-harness:end -->"
+PRETOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell"
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
+class Plan:
+    def __init__(self, dry):
+        self.dry = dry
+
+    def say(self, msg):
+        print(("[미리보기] " if self.dry else "") + msg)
+
+
+def fwd(p):
+    return p.replace("\\", "/")
+
+
+def hook_command(script):
+    return f'"{fwd(sys.executable)}" "{fwd(os.path.join(HOOK_DIR, script))}"'
+
+
+# ---------- 스킬 ----------
+def install_skills(plan, uninstall=False):
+    src_root = os.path.join(REPO, "skills")
+    dst_root = os.path.join(CLAUDE_HOME, "skills")
+    for name in sorted(os.listdir(src_root)):
+        src = os.path.join(src_root, name)
+        if not os.path.isfile(os.path.join(src, "SKILL.md")):
+            continue
+        dst = os.path.join(dst_root, name)
+        ours = os.path.isfile(os.path.join(dst, MARKER))
+        if os.path.exists(dst) and not ours:
+            plan.say(f"건너뜀: 스킬 {name} (같은 이름의 다른 스킬이 이미 있음)")
+            continue
+        if uninstall:
+            if ours:
+                plan.say(f"제거: 스킬 {name}")
+                if not plan.dry:
+                    shutil.rmtree(dst)
+            continue
+        plan.say(("갱신" if ours else "설치") + f": 스킬 {name}")
+        if not plan.dry:
+            if ours:
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            with open(os.path.join(dst, MARKER), "w", encoding="utf-8") as f:
+                f.write(f"installed from {REPO} at {time.strftime('%Y-%m-%d %H:%M')}\n")
+
+
+# ---------- 훅 파일 ----------
+def install_hook_files(plan, uninstall=False):
+    if uninstall:
+        if os.path.isdir(HOOK_DIR):
+            plan.say(f"제거: {HOOK_DIR}")
+            if not plan.dry:
+                shutil.rmtree(HOOK_DIR)
+        return
+    plan.say(f"복사: 훅 스크립트 -> {HOOK_DIR}")
+    if not plan.dry:
+        os.makedirs(HOOK_DIR, exist_ok=True)
+        for fn in os.listdir(os.path.join(REPO, "hooks")):
+            if fn.endswith(".py"):
+                shutil.copy2(os.path.join(REPO, "hooks", fn), os.path.join(HOOK_DIR, fn))
+
+
+# ---------- CLAUDE.md ----------
+def install_claude_md(plan, uninstall=False):
+    path = os.path.join(CLAUDE_HOME, "CLAUDE.md")
+    current = ""
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8-sig") as f:
+            current = f.read()
+    has_block = BLOCK_START in current and BLOCK_END in current
+    if has_block:
+        before, rest = current.split(BLOCK_START, 1)
+        after = rest.split(BLOCK_END, 1)[1]
+    else:
+        before, after = current, ""
+
+    if uninstall:
+        if has_block:
+            plan.say(f"제거: {path}의 하네스 블록")
+            new = (before.rstrip() + "\n" + after.lstrip()).strip()
+            if not plan.dry:
+                if new:
+                    with open(path, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(new + "\n")
+                else:
+                    os.remove(path)
+        return
+
+    with open(os.path.join(REPO, "global", "CLAUDE.md"), encoding="utf-8-sig") as f:
+        body = f.read().strip()
+    block = f"{BLOCK_START}\n{body}\n{BLOCK_END}"
+    if has_block:
+        new = before + block + after
+        plan.say(f"갱신: {path}의 하네스 블록")
+    elif current.strip():
+        new = current.rstrip() + "\n\n" + block + "\n"
+        plan.say(f"추가: 기존 {path} 끝에 하네스 블록")
+    else:
+        new = block + "\n"
+        plan.say(f"생성: {path}")
+    if not plan.dry:
+        os.makedirs(CLAUDE_HOME, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(new)
+
+
+# ---------- settings.json ----------
+def strip_ours(groups):
+    kept = []
+    for g in groups or []:
+        hooks = [h for h in g.get("hooks", []) if "local-harness" not in h.get("command", "")]
+        if hooks:
+            kept.append(dict(g, hooks=hooks))
+    return kept
+
+
+def install_settings(plan, uninstall=False):
+    path = os.path.join(CLAUDE_HOME, "settings.json")
+    settings = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8-sig") as f:
+            text = f.read().strip()
+        settings = json.loads(text) if text else {}
+    hooks = settings.get("hooks", {})
+
+    for event in ("PreToolUse", "SessionStart"):
+        hooks[event] = strip_ours(hooks.get(event))
+    if not uninstall:
+        hooks["PreToolUse"].append({"matcher": PRETOOL_MATCHER, "hooks": [
+            {"type": "command", "command": hook_command("guard.py"), "timeout": 10}]})
+        hooks["SessionStart"].append({"hooks": [
+            {"type": "command", "command": hook_command("session_restore.py"), "timeout": 10}]})
+    hooks = {k: v for k, v in hooks.items() if v}
+    if hooks:
+        settings["hooks"] = hooks
+    else:
+        settings.pop("hooks", None)
+
+    plan.say(("제거" if uninstall else "연결") + f": {path}의 훅 (PreToolUse, SessionStart)")
+    if not plan.dry:
+        if os.path.isfile(path):
+            backup = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(path, backup)
+            plan.say(f"백업: {backup}")
+        os.makedirs(CLAUDE_HOME, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="로컬 하네스 설치기")
+    ap.add_argument("--dry-run", action="store_true", help="바꾸지 않고 할 일만 출력")
+    ap.add_argument("--uninstall", action="store_true", help="이 하네스가 설치한 것만 제거")
+    args = ap.parse_args()
+
+    plan = Plan(args.dry_run)
+    plan.say(f"대상: {CLAUDE_HOME}")
+    plan.say(f"Python: {sys.executable}")
+    install_skills(plan, args.uninstall)
+    install_hook_files(plan, args.uninstall)
+    install_claude_md(plan, args.uninstall)
+    install_settings(plan, args.uninstall)
+    if not args.dry_run:
+        print("완료. 이미 열려 있는 Claude Code 세션은 새로 시작해야 훅과 스킬이 적용됩니다.")
+
+
+if __name__ == "__main__":
+    main()
