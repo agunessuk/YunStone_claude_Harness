@@ -32,8 +32,8 @@ Mac: `./install.sh` (옵션 같음)
 
 | 훅 | 동작 | 켜는 법 |
 |---|---|---|
-| 원본 보호 | 목록에 있는 경로를 Edit·Write로 고치면 **차단**(대소문자 구별 없음), 셸 명령으로 건드리면 **확인 요청**. 글롭 패턴(`plugins/*.jar`)은 맞는 파일·폴더 자체·와일드카드일 때만 확인 | 프로젝트에 `.claude/protected.txt` |
-| 위험 명령 확인 | `rm -r`, `Remove-Item -Recurse`, `git reset --hard`, `git push --force`, `git clean -f` 등은 실행 전에 **확인 요청** | 항상 켜짐 |
+| 원본 보호 | 목록에 있는 경로를 Edit·Write로 고치면 **차단**(대소문자 구별 없음), 셸 명령은 그 경로를 **쓰거나 지울 때만** 확인 요청(읽기, 글 속 낱말, 다른 폴더 작업은 통과). 글롭 패턴(`plugins/*.jar`)은 맞는 파일·폴더 자체·와일드카드일 때만 확인 | 프로젝트에 `.claude/protected.txt` |
+| 위험 명령 확인 | `rm -r`, `Remove-Item -Recurse`, `git reset --hard`, `git push --force`, `git clean -f` 등은 실행 전에 **확인 요청**. 단, 임시 폴더 안을 절대 경로(같은 명령에서 정한 변수 포함)로 지우는 것은 통과 | 항상 켜짐 |
 | 읽기 전용 모드 | 허용한 폴더 밖 파일 수정은 **차단**, 파일을 바꾸는 셸 명령은 **확인 요청** | 프로젝트에 `.claude/READONLY` (지우면 꺼짐) |
 | 상태 복원 | 세션 시작·재개·문맥 압축 뒤 `PROGRESS.md`, 읽기 전용 여부, 보호 목록을 자동으로 알려 줌 | 프로젝트 루트에 `PROGRESS.md` |
 | 자기 보호 | 훅 파일, `settings.json`, 프로젝트의 `protected.txt`·`READONLY`·`approvals.json` 수정은 파일 도구든 셸이든 **확인 요청** (AI가 `approvals.json`을 파일 도구로 쓰면 **차단**) | 항상 켜짐 |
@@ -42,7 +42,7 @@ Mac: `./install.sh` (옵션 같음)
 - 차단·확인·승인 사용 기록: `~/.claude/local-harness-log/events.jsonl`
 - 승인이 필요한 이유: 헤드리스 실행(`claude -p`)에서는 확인 요청을 받을 사람이 없어 자동 거부된다. 사람이 나중에 "이 명령 1번 허락"이라고 답하면 그 명령만 통과시켜 작업을 이어 갈 수 있다.
 - `approvals.json` 형식: `{"approvals": [{"sha256": 명령 문자열(앞뒤 공백 제거)의 sha256, "command": 명령, "once": true, "expires": 유닉스 시각, "used": 0}]}`
-- 셸 명령 검사는 글자 패턴으로 하는 대략적인 검사라서 차단하지 않고 확인만 받습니다. 셸 동사(rm, cp, >)뿐 아니라 `python -c`·`node -e`의 파일 쓰기, `[IO.File]::Write…`, `find -delete`, 압축 풀기도 봅니다.
+- 셸 명령 검사는 명령을 낱말로 나눠 **쓰는 대상**(`>` 뒤, `cp`·`mv` 목적지, `rm` 대상, `sed -i`·`Set-Content` 파일, 압축 풀 위치, 내려받을 파일)을 찾고, 앞의 `cd`와 같은 명령 안 변수(`S="..."`)를 반영해 판단합니다. `python -c`·`node -e`·히어독 코드는 파일을 바꾸는 호출이 있는 줄의 경로만 봅니다. 대략적인 검사라서 차단하지 않고 확인만 받으며, 낱말로 나누지 못하는 명령은 예전 방식(이름이 나오면 확인)으로 판단합니다.
 - 알려진 빈틈: `python 스크립트.py input/a.txt`처럼 **스크립트 파일 안에서** 원본을 쓰는 것은 명령만 봐서는 알 수 없어 통과합니다.
 - 훅은 고장 나면 조용히 통과합니다. Python을 다시 깔았거나 이상하면 `python install.py --check`로 점검합니다.
 
