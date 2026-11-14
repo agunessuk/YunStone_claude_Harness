@@ -7,15 +7,16 @@
 직접 쓸 때: kit = Kit(원본경로); build(kit); kit.save(출력경로)   (원본은 읽기만, 출력=원본이면 멈춤)
 
 규칙 (아트 기준과 맞춤)
-- 크기·위치는 정수(1 = 1/16 블록). 부품 텍스처는 1 유닛 = 1 px → 원본과 같은 밀도(16 px/블록), 믹셀 없음.
+- 크기·위치는 정수(1 = 1/16 블록). 부품 텍스처 밀도 = 원본 모델 밀도(보통 1 px/유닛 = 16 px/블록) → 믹셀 없음.
 - 회전은 ModelEngine 규칙: 한 축만, 0·±22.5·±45 도.
 - 새 큐브는 기존 뼈에 붙인다(기존 동작이 그대로 움직인다). 뼈 이름·동작은 바꾸지 않는다.
-- 부품 텍스처는 새 텍스처 한 장(원본 UV 해상도와 같은 크기)에 모은다. 모자라면 한 장 더.
+- 부품 면은 먼저 원본 텍스처의 빈 곳(어떤 면도 쓰지 않고 투명한 곳)에 넣는다 → 텍스처 장수가 늘지 않는다.
+  모자라면 새 텍스처(원본 UV 해상도 크기)를 한 장씩 더한다. 발광 층(_e)·애니메이션 텍스처에는 넣지 않는다.
 - 칠하기: 재질별 색 계단(reshade.ramp) 위에 부품 종류별 무늬 + 1px 테두리 한 칸 어둡게 + 위 밝게 + 약한 얼룩.
   종류: plain(맨살·뼈·나무), cloth(천: 세로 주름·찢어진 밑단), metal(금속: 윗줄 반짝임·모서리 징),
         hair(머리카락: 세로 가닥·들쭉날쭉 끝), glow(빛: 테두리 없이 가운데 밝게), dark(구멍·그림자 속)
 """
-import copy, math, os, sys, uuid as _uuid
+import copy, math, os, sys, zlib, uuid as _uuid
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +40,11 @@ def _face_px(fname, size):
     sx, sy, sz = size
     return {"north": (sx, sy), "south": (sx, sy), "east": (sz, sy), "west": (sz, sy),
             "up": (sx, sz), "down": (sx, sz)}[fname]
+
+
+def _num(v):
+    """정수로 떨어지면 정수로 (파일을 깔끔하게)."""
+    return int(round(v)) if abs(v - round(v)) < 1e-9 else round(v, 4)
 
 
 class Packer:
@@ -73,6 +79,67 @@ class Kit:
         self.count = 0
         self.groups = {}
         self._index_groups()
+        self._canvas = None      # 원본 텍스처 {번호: [RGBA, 빈칸 지도, sx, sy, 바뀜]} (처음 배치할 때 만든다)
+        self.density = self._density()
+
+    def _density(self):
+        """원본 모델 밀도(px/유닛)를 0.5·1·2·4 중 가까운 값으로. 많이 벗어나면 density_fix 먼저 하라고 알린다."""
+        import metrics
+        try:
+            d = metrics.measure(self.src)["px_per_unit"] or 1.0
+        except Exception:
+            return 1.0
+        best = min((0.5, 1.0, 2.0, 4.0), key=lambda c: abs(math.log(d / c)))
+        if abs(d / best - 1) > 0.1:
+            print(f"주의: 원본 밀도 {d:.3f} px/유닛 — 부품은 {best} 로 맞춘다. density_fix.py 로 밀도를 먼저 맞추길 권함")
+        return best
+
+    def _ensure_canvas(self):
+        if self._canvas is not None:
+            return
+        self._canvas = {}
+        texs = bbtex.textures(self.m)
+        occ = {t["idx"]: np.zeros((t["h"] // t["frames"], t["w"]), bool) for t in texs if t["img"] is not None}
+        for e in self.m.get("elements", []):
+            for f in (e.get("faces") or {}).values():
+                if not f.get("uv"):
+                    continue
+                ti = bbtex.face_tex(f, texs)
+                if ti is None or ti not in occ:
+                    continue
+                x0, y0, x1, y1 = bbtex.face_rect(f, texs[ti])
+                occ[ti][max(0, y0):y1 + 1, max(0, x0):x1 + 1] = True
+        for t in texs:
+            if t["img"] is None or t["frames"] > 1 or t["name"].lower().replace(".png", "").endswith("_e"):
+                continue
+            img = t["img"].copy()
+            o = occ[t["idx"]]
+            o |= img[: o.shape[0], :, 3] > 0
+            self._canvas[t["idx"]] = [img, o, t["sx"], t["sy"], False]
+
+    @staticmethod
+    def _free_spot(occ, w, h):
+        H, W = occ.shape
+        if w > W or h > H:
+            return None
+        sat = np.pad(occ.astype(np.int32), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+        tot = sat[h:, w:] - sat[:-h, w:] - sat[h:, :-w] + sat[:-h, :-w]      # 칸마다 그 자리 w×h 안에 차 있는 픽셀 수
+        ys, xs = np.nonzero(tot == 0)
+        if not len(ys):
+            return None
+        return int(xs[0]), int(ys[0])
+
+    def cubes(self, bone=None):
+        """기존(원본) 큐브 목록 [(뼈, 이름, from, to, 회전, 뒤집힘)] — 겹칠 자리를 피해 설계할 때 본다."""
+        import metrics
+        bb = metrics._bbpose().Model(self.src)
+        out = []
+        for eu, e in bb.elements.items():
+            g = bb.groups.get(bb.elem_group.get(eu), {}).get("name")
+            if bone and g != bone:
+                continue
+            out.append((g, e.get("name"), e["from"], e["to"], e.get("rotation"), bbtex.is_flipped(e)))
+        return out
 
     # ── 뼈 찾기 (4.x 안쪽 객체, 5.0 groups 배열 둘 다) ──
     def _index_groups(self):
@@ -93,17 +160,19 @@ class Kit:
         side = {g["uuid"]: g for g in self.m.get("groups", []) if isinstance(g, dict) and "uuid" in g}
         return list(node.get("origin") or side.get(node.get("uuid"), {}).get("origin") or [0, 0, 0])
 
-    def colors(self, n=8):
-        """원본 텍스처의 주요 색 n 개 (픽셀 수 순) → 새 부품 재질을 원래 색에서 고를 때 쓴다. [(hex, 비율, OKLab L)]"""
-        pix = [t["img"][t["img"][..., 3] >= 128][:, :3] for t in bbtex.textures(self.m) if t["img"] is not None]
+    def colors(self, n=8, original=True):
+        """주요 색 n 개 (픽셀 수 순) → 새 부품 재질을 원래 색에서 고를 때 쓴다. [(hex, 비율, OKLab L, HSV 명도 V)]
+        original=True 면 원본 파일 색, False 면 지금(다시 칠한 뒤) 색. 재질의 center 는 OKLab L 이다."""
+        src = bbtex.load(self.src) if original else self.m
+        pix = [t["img"][t["img"][..., 3] >= 128][:, :3] for t in bbtex.textures(src) if t["img"] is not None]
         if not pix:
             return []
         P = np.concatenate(pix)
         codes, cnt = np.unique(P, axis=0, return_counts=True)
         o = np.argsort(-cnt)[:n]
         lab = reshade.to_oklab(codes[o] / 255.0)
-        return [("#%02x%02x%02x" % tuple(codes[i]), round(cnt[i] / cnt.sum(), 3), round(float(lab[j][0]), 3))
-                for j, i in enumerate(o)]
+        return [("#%02x%02x%02x" % tuple(codes[i]), round(cnt[i] / cnt.sum(), 3), round(float(lab[j][0]), 3),
+                 round(float(codes[i].max()) / 255, 3)) for j, i in enumerate(o)]
 
     def material(self, name, hexcolor, half=0.22, steps=6, center=None):
         lab = _hex_lab(hexcolor)
@@ -111,11 +180,11 @@ class Kit:
         self.mats[name] = dict(ramp=reshade.ramp(lab, c, half, steps), steps=steps)
 
     def _new_texture(self):
-        w, h = self.res
+        w, h = int(self.res[0] * self.density), int(self.res[1] * self.density)      # px (uv 크기 = 원본 해상도)
         idx = len(self.m["textures"])
         name = f"{os.path.splitext(os.path.basename(self.src))[0]}_detail{len(self.tex) + 1}.png"
         t = {"path": "", "name": name, "folder": "", "namespace": "", "id": str(idx), "width": w, "height": h,
-             "uv_width": w, "uv_height": h, "particle": False, "use_as_default": False, "layers_enabled": False,
+             "uv_width": self.res[0], "uv_height": self.res[1], "particle": False, "use_as_default": False, "layers_enabled": False,
              "sync_to_project": "", "render_mode": "default", "render_sides": "auto", "frame_time": 1,
              "frame_order_type": "loop", "frame_order": "", "frame_interpolate": False, "visible": True,
              "internal": True, "saved": False, "uuid": self._uid("tex", idx), "relative_path": "", "source": ""}
@@ -127,15 +196,24 @@ class Kit:
         return str(_uuid.uuid5(_uuid.NAMESPACE_URL, "/".join(str(p) for p in (self.seed,) + parts)))
 
     def _alloc(self, w, h):
+        """w×h 픽셀 자리 → (텍스처 번호, x, y, sx, sy). 원본 텍스처 빈 곳 → 새 부품 텍스처 순."""
+        self._ensure_canvas()
+        for ti, c in self._canvas.items():
+            r = self._free_spot(c[1], w, h)
+            if r:
+                x, y = r
+                c[1][y:y + h, x:x + w] = True
+                c[4] = True
+                return ti, x, y, c[2], c[3]
         for t in self.tex:
             r = t[1].alloc(w, h)
             if r:
-                return t[0], r
+                return t[0], r[0], r[1], self.density, self.density
         t = self._new_texture()
         r = t[1].alloc(w, h)
         if not r:
             raise ValueError(f"면이 너무 큼 {w}x{h} (텍스처 {self.res})")
-        return t[0], r
+        return t[0], r[0], r[1], self.density, self.density
 
     def cube(self, bone, frm, to, mat, kind="plain", name=None, skip=(), rot=None, origin=None, opts=None):
         """bone 에 큐브 하나. frm/to 정수 좌표. skip: 텍스처를 주지 않을 면(안 보이는 면). rot: (축, 각도)."""
@@ -161,12 +239,13 @@ class Kit:
         faces = {}
         for f in FACES:
             fw, fh = _face_px(f, size)
-            if f in skip or fw < 1 or fh < 1:
+            if f in skip or fw < 1e-6 or fh < 1e-6:
                 faces[f] = {"uv": [0, 0, 0, 0], "texture": None}
                 continue
-            ti, (x, y) = self._alloc(int(round(fw)), int(round(fh)))
-            faces[f] = {"uv": [x, y, x + int(round(fw)), y + int(round(fh))], "texture": ti}
-            self.jobs.append((ti, x, y, int(round(fw)), int(round(fh)), f, mat, kind, dict(opts or {}), size, self.count))
+            pw, ph = max(1, int(round(fw * self.density))), max(1, int(round(fh * self.density)))
+            ti, x, y, sx, sy = self._alloc(pw, ph)
+            faces[f] = {"uv": [_num(x / sx), _num(y / sy), _num((x + pw) / sx), _num((y + ph) / sy)], "texture": ti}
+            self.jobs.append((ti, x, y, pw, ph, f, mat, kind, dict(opts or {}), size, self.count))
         e = {"name": name or f"{kind}_{self.count}", "box_uv": False, "rescale": False, "locked": False,
              "render_order": "default", "allow_mirror_modeling": True, "from": frm, "to": to, "autouv": 0,
              "color": self.count % 8, "origin": list(origin) if origin else [(frm[i] + to[i]) / 2 for i in range(3)],
@@ -190,9 +269,10 @@ class Kit:
 
     # ── 칠하기 ──
     def paint(self):
-        rng_base = abs(hash(self.seed)) % 9973
+        rng_base = zlib.crc32(str(self.seed).encode("utf-8")) % 9973      # 실행마다 같은 무늬 (hash() 는 실행마다 다름)
+        self._ensure_canvas()
         for (ti, x, y, w, h, fname, mat, kind, opts, size, cid) in self.jobs:
-            img = next(t[2] for t in self.tex if t[0] == ti)
+            img = self._canvas[ti][0] if ti in self._canvas else next(t[2] for t in self.tex if t[0] == ti)
             ramp = self.mats[mat]["ramp"]
             steps = len(ramp)
             st = 1.0 / (steps - 1)
@@ -276,9 +356,14 @@ class Kit:
             img[y:y + h, x:x + w, 3] = alpha
         for idx, _, arr in self.tex:
             self.m["textures"][idx]["source"] = bbtex.encode_png(arr)
+        for idx, c in self._canvas.items():
+            if c[4]:                                     # 빈 곳에 부품을 넣은 원본 텍스처
+                self.m["textures"][idx]["source"] = bbtex.encode_png(c[0])
 
     def replace_texture(self, path_with_textures):
         """원본 큐브의 텍스처를 다른 파일(예: reshade 결과)의 것으로 바꾼다 (같은 모델에서 나온 파일)."""
+        if self._canvas:
+            raise RuntimeError("replace_texture 는 부품을 넣기 전에 불러야 한다")
         other = bbtex.load(path_with_textures)
         for i, t in enumerate(other.get("textures", [])):
             if i < len(self.m["textures"]):

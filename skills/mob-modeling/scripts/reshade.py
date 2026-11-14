@@ -15,7 +15,7 @@
   --seed 1         결 무늬 시드 (같은 시드 → 같은 결과)
   --protect #e07a1f,#ffd34a  이 색과 가까운 재질은 다시 칠하지 않는다 (몹의 상징색: 호박 주황, 눈빛 등)
   --mode adjust    기본: 원래 색(색상·채도)을 두고 밝기만 조정 → 상징색이 바뀌지 않는다
-         ramp      재질마다 새 색 계단으로 다시 칠함 (4색처럼 단조로운 텍스처용, 색이 바뀔 수 있음 → 렌더로 꼭 확인)
+         ramp      재질마다 새 색 계단으로 다시 칠함 (단조로운 텍스처: 색95 ≤ 6 또는 명암 폭 < 0.08. 색이 바뀔 수 있음 → 렌더로 꼭 확인)
 원본은 읽기만 한다. 출력은 원본 복사본에 텍스처만 바꾼 것.
 """
 import argparse, colorsys, math, os, sys
@@ -384,6 +384,10 @@ def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=
         img[:H] = frame
         m["textures"][ti]["source"] = bbtex.encode_png(img)
     bbtex.save(m, path_out)
+    v_end, c_end = stats(res)
+    if verbose and mode == "adjust" and c_end < 0.9 * contrast:
+        print(f"알림: 원래 색만으로는 명암 폭이 {c_end:.3f} 까지만 올라감 (목표 {contrast}). 원본이 단조로우면"
+              f"(색95 ≤ 6 또는 명암 폭 < 0.08) --mode ramp 를 쓰고, 상징색은 --protect 로 지킨다")
     if verbose:
         v, c = stats(res)
         print(f"[{mode}] 재질 {len(groups)}개 (그대로 둔 색 {sum(keep_group)}), 명도 {v:.3f}, 명암 {c:.3f}, "

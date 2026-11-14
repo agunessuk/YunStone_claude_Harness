@@ -122,7 +122,7 @@ def build(spec, k):
                 fh.write(t["png"])
             img = bpy.data.images.load(p)
         mats.append(mc_material(f"m{k}_{t['idx']}", img) if img else None)
-    pose = (cfg.get("pose") or {}).get(spec.get("key", ""))
+    pose = spec.get("pose") or (cfg.get("pose") or {}).get(spec.get("key", ""))
     anim = M.animations().get(pose[0]) if pose else None
     gm = M.group_mats(anim, float(pose[1]) if pose else 0.0)
     S = np.diag([spec.get("scale", 1.0)] * 3 + [1.0])
@@ -131,7 +131,8 @@ def build(spec, k):
         e = M.elements[eu]
         a, b = np.array(e["from"], float), np.array(e["to"], float)
         inf = e.get("inflate", 0) or 0
-        lo, hi = np.minimum(a, b) - inf, np.maximum(a, b) + inf
+        # Blockbench 처럼 from/to 를 순서 그대로 쓴다: from>to 인 축(양면용 뒤집힌 복사본)은 면이 저절로 안쪽을 향한다
+        lo, hi = (a, b) if bbtex.is_flipped(e) else (np.minimum(a, b) - inf, np.maximum(a, b) + inf)
         verts, faces, uvs, fm = [], [], [], []
         for fname, corners in FACES.items():
             f = (e.get("faces") or {}).get(fname)
@@ -296,6 +297,7 @@ center_cam = Vector(((cmin[0] + cmax[0]) / 2, (cmin[1] + cmax[1]) / 2, cmax[2] +
 cam.location = cam.matrix_world @ center_cam
 bpy.context.view_layer.update()
 scene.render.image_settings.file_format = "PNG"
+bpy.ops.render.render(write_still=False)        # 예열: 첫 렌더는 셰이더·텍스처가 덜 올라와 틀릴 때가 있어 버린다
 scene.render.filepath = cfg["out"]
 bpy.ops.render.render(write_still=True)
 
@@ -305,4 +307,6 @@ for spec, objs, lo, hi in placed:
     c = world_to_camera_view(scene, cam, Vector(((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, 0)))
     info.append(dict(key=spec.get("key"), x=c.x * W, y=(1 - c.y) * H, height_blk=round(float(hi[2] - lo[2]), 2)))
 json.dump(dict(width=W, height=H, models=info), open(cfg["out"] + ".json", "w", encoding="utf-8"), ensure_ascii=False)
+import shutil
+shutil.rmtree(tmp, ignore_errors=True)
 print("LINEUP_DONE", W, H)

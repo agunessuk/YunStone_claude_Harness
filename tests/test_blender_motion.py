@@ -162,6 +162,16 @@ def main():
         r = pose_check.measure(M3, M3.animations()["sink"], None)
         expect(f"pose_check: 바닥 아래 −3, 끝 끊김 3 ({r['floor']}, {r['end']})", abs(r["floor"] + 3) < 1e-6 and abs(r["end"] - 3) < 1e-6)
         expect("pose_check: 주의 판단", any("바닥 아래" in v for v in pose_check.verdict(r)))
+        # 크기(scale) 키: 뼈 기준점에서 배율 (팩 공격 동작의 팔 늘이기 등이 렌더·검사에 반영)
+        mj4 = model_json()
+        mj4["animations"][0]["animators"]["g-arm"]["keyframes"] += [kf("scale", 0, 1, 1, 1), kf("scale", 1, 1, 2, 1)]
+        M4 = bbpose.Model(write(tmp, "scale.bbmodel", mj4))
+        a4 = M4.animations()["swing"]
+        o4 = np.array([1, 8, 1.0])
+        p40 = (M4.element_mat("e1", M4.group_mats(a4, 0.0)) @ np.array([1, 0, 1, 1.0]))[:3]
+        p41 = (M4.element_mat("e1", M4.group_mats(a4, 1.0)) @ np.array([1, 0, 1, 1.0]))[:3]
+        d0, d1 = np.linalg.norm(p40 - o4), np.linalg.norm(p41 - (o4 + np.array([-2, 0, 0])))   # 루트 위치 x 2 → 부호 반전 규칙으로 −2
+        expect(f"bbpose: 크기 키 1→2 로 팔 끝까지 8→16 칸 ({d0:.2f}, {d1:.2f})", abs(d0 - 8) < 1e-6 and abs(d1 - 16) < 1e-6)
 
     print(f"\n{'통과' if not fails else '실패 ' + str(len(fails)) + '개'}")
     sys.exit(1 if fails else 0)

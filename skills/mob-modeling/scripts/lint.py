@@ -1,7 +1,7 @@
 """모델 검사: ModelEngine R4 규칙 + 아트 기준 수치 (읽기 전용).
 
 사용 (프로젝트 루트에서):
-  python -I <스킬>/scripts/lint.py <모델.bbmodel>[@배율] ... [--std 기준.json] [--md 결과.md]
+  python -I <스킬>/scripts/lint.py <모델ID 또는 .bbmodel>[@배율] ... [--theme dark] [--std 기준.json] [--md 결과.md]
 판정: 오류(서버에서 깨질 가능성이 큼) / 경고(기준 밖이거나 인게임 확인 필요) / 통과
 근거: research_notes/마인크래프트 3D 몹 모델링 방식/engine_limits_performance.md (ME 공식 위키 2026-11 갱신본)
 """
@@ -13,6 +13,7 @@ sys.path.insert(0, HERE)
 sys.dont_write_bytecode = True
 import bbtex  # noqa: E402
 import metrics  # noqa: E402
+import skilldeps  # noqa: E402
 
 ALLOWED = (0.0, 22.5, 45.0)
 EMPTY_TAGS = re.compile(r"^(ih_|ir_|il_|l_|seg_|tl_|tlf_|mount)", re.I)     # 큐브가 없어야 하는 태그 뼈
@@ -24,7 +25,7 @@ def pow2(n):
     return n > 0 and (n & (n - 1)) == 0
 
 
-def lint(path, scale=1.0, std=None):
+def lint(path, scale=1.0, std=None, theme=None):
     bbpose = metrics._bbpose()
     M = bbpose.Model(path)
     m = M.m
@@ -92,6 +93,17 @@ def lint(path, scale=1.0, std=None):
                   for k in an.get("keyframes", []) if k.get("interpolation") == "bezier"})
     if bez:
         warn.append(f"Bezier 보간 동작 {len(bez)}개 (ModelEngine 은 linear 로 재생): {', '.join(bez[:5])}")
+    # 겹쳐 깜박일 면, 뒤집힌 큐브, 텍스처 장수
+    ov = bbtex.overlaps(M, bbtex.body_elements(M))
+    if ov:
+        warn.append(f"같은 평면에 겹친 면 {len(ov)}쌍 (깜박임·z-fighting): "
+                    + ", ".join(f"{a}.{fa}×{b}.{fb}" for a, fa, b, fb, _ in ov[:5]) + (" …" if len(ov) > 5 else ""))
+    nflip = sum(1 for e in M.elements.values() if bbtex.is_flipped(e))
+    if nflip:
+        warn.append(f"뒤집힌 큐브(from>to, 안쪽 면 표시용) {nflip}개 — ModelEngine·인게임 표시 확인 필요, 큐브 수에서 뺌")
+    body_tex = [t for t in texs if not t["name"].lower().rstrip(".png").endswith("_e")]
+    if len(body_tex) > 2:
+        warn.append(f"본체 텍스처 {len(body_tex)}장 (기준: 본체 1장 + 발광 1장, 부품은 빈 곳에 먼저)")
     # 크기·밀도·색 (metrics)
     r = metrics.measure(path, scale)
     def _frac(d):       # 두께 0.1 미만 판(겹침 방지용)은 빼고 본다
@@ -100,27 +112,28 @@ def lint(path, scale=1.0, std=None):
     if M.elements and frac / len(M.elements) > 0.10:
         warn.append(f"소수 크기 큐브 {frac}/{len(M.elements)} (UV 를 편 뒤 통째 확대·축소한 흔적 → 밀도 불일치)")
     if std:
-        for k in metrics.judge(r, std):
-            warn.append(f"아트 기준 밖: {k}")
+        for k in metrics.judge(r, std, theme):
+            warn.append(f"아트 기준 밖{f'({theme} 테마)' if theme else ''}: {k}")
     info.append(f"큐브 {r['cubes']}, 렌더 뼈 {render_bones}, 키 {r['height_blk']}칸, {r.get('px_per_block')} px/블록, "
                 f"색95 {r.get('colors95')}, 명도 {r.get('val')}, 명암 {r.get('contrast')}, 테두리 {r.get('edge_dark')}")
     return dict(file=os.path.basename(path), err=err, warn=warn, info=info, metrics=r, render_bones=render_bones)
 
 
 def main(argv):
-    std_path, md = None, None
+    std_path, md, theme = None, None, None
     items, i = [], 0
     while i < len(argv):
         if argv[i] == "--std": std_path = argv[i + 1]; i += 2; continue
         if argv[i] == "--md": md = argv[i + 1]; i += 2; continue
+        if argv[i] == "--theme": theme = argv[i + 1]; i += 2; continue
         items.append(argv[i]); i += 1
     import skilldeps
     std, used = skilldeps.load_std(std_path)
     print(f"(아트 기준: {used or '없음'})")
     lines = []
     for it in items:
-        p, _, s = it.partition("@")
-        res = lint(p, float(s) if s else 1.0, std)
+        sp = skilldeps.resolve(it)
+        res = lint(sp["path"], sp["scale"], std, theme)
         verdict = "오류" if res["err"] else ("경고" if res["warn"] else "통과")
         lines.append(f"### {res['file']} — {verdict}")
         lines += [f"- 오류: {x}" for x in res["err"]] + [f"- 경고: {x}" for x in res["warn"]] + [f"- 정보: {x}" for x in res["info"]]

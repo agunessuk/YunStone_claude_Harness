@@ -132,5 +132,58 @@ def body_elements(model, show_vfx=False):
     return out
 
 
+def is_flipped(e):
+    """from > to 인 축이 있는 큐브 (Blockbench 에서 안쪽 면을 보이게 하는 양면용 복사본)."""
+    return any(float(e["from"][i]) > float(e["to"][i]) + 1e-9 for i in range(3))
+
+
+FACE_CORNERS = {"north": [(1, 1, 0), (0, 1, 0), (0, 0, 0), (1, 0, 0)], "south": [(0, 1, 1), (1, 1, 1), (1, 0, 1), (0, 0, 1)],
+                "east": [(1, 1, 1), (1, 1, 0), (1, 0, 0), (1, 0, 1)], "west": [(0, 1, 0), (0, 1, 1), (0, 0, 1), (0, 0, 0)],
+                "up": [(0, 1, 0), (1, 1, 0), (1, 1, 1), (0, 1, 1)], "down": [(0, 0, 1), (1, 0, 1), (1, 0, 0), (0, 0, 0)]}
+
+
+def overlaps(model, elems=None, min_area=0.25):
+    """기본 자세에서 같은 평면·같은 방향으로 겹치는 면 쌍 (z-fighting 으로 깜박일 수 있는 곳).
+    반환: [(큐브A 이름, 면, 큐브B 이름, 면, 겹친 넓이)]. 텍스처 없는 면·뒤집힌 큐브는 뺀다."""
+    texs = textures(model.m, decode=False)
+    gm = model.group_mats()
+    faces = []
+    for eu in (elems or list(model.elements)):
+        e = model.elements[eu]
+        if is_flipped(e):
+            continue
+        a, b = np.array(e["from"], float), np.array(e["to"], float)
+        inf = e.get("inflate", 0) or 0
+        lo, hi = a - inf, b + inf
+        M = model.element_mat(eu, gm)
+        for fname, cs in FACE_CORNERS.items():
+            f = (e.get("faces") or {}).get(fname)
+            if not f or face_tex(f, texs) is None:
+                continue
+            P = np.array([(M @ np.array([hi[0] if cx else lo[0], hi[1] if cy else lo[1], hi[2] if cz else lo[2], 1.0]))[:3]
+                          for cx, cy, cz in cs])
+            n = np.cross(P[1] - P[0], P[3] - P[0])
+            if np.linalg.norm(n) < 1e-9:
+                continue
+            n = n / np.linalg.norm(n)
+            faces.append((e.get("name", "?"), fname, n, float(n @ P[0]), P, eu))
+    out = []
+    for i in range(len(faces)):
+        ni, di, Pi = faces[i][2], faces[i][3], faces[i][4]
+        for j in range(i + 1, len(faces)):
+            if faces[j][5] == faces[i][5]:
+                continue
+            nj, dj, Pj = faces[j][2], faces[j][3], faces[j][4]
+            if ni @ nj < 0.999 or abs(di - dj) > 0.01:
+                continue
+            u = Pi[1] - Pi[0]; u = u / np.linalg.norm(u); v = np.cross(ni, u)
+            ri = np.array([[p @ u, p @ v] for p in Pi]); rj = np.array([[p @ u, p @ v] for p in Pj])
+            w = min(ri[:, 0].max(), rj[:, 0].max()) - max(ri[:, 0].min(), rj[:, 0].min())
+            h = min(ri[:, 1].max(), rj[:, 1].max()) - max(ri[:, 1].min(), rj[:, 1].min())
+            if w > 1e-6 and h > 1e-6 and w * h >= min_area:
+                out.append((faces[i][0], faces[i][1], faces[j][0], faces[j][1], round(w * h, 2)))
+    return out
+
+
 def luma(rgb):
     return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]

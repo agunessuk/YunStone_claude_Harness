@@ -34,6 +34,48 @@ def find_blender():
     return make_motion.find_blender()
 
 
+def model_index():
+    """프로젝트의 모델 ID → 파일 (작업/모션/점검_원자료.json 이 있으면). 없으면 빈 사전."""
+    files = {}
+    p = os.path.join("작업", "모션", "점검_원자료.json")
+    if os.path.isfile(p):
+        d = json.load(open(p, encoding="utf-8"))
+        for dg in d.get("dungeons", []):
+            for m in dg.get("mobs", []):
+                if m.get("model") and m["model"] not in files:
+                    files[m["model"]] = m.get("file")
+    return files
+
+
+def resolve(token, files=None):
+    """'<모델ID 또는 경로>[@배율][=이름표]' → dict(path, scale, key, label).
+    ID 는 점검_원자료.json → 작업/풀어본_자료/**/<ID>.bbmodel → 현재 폴더 아래 전체(원본/·.git 제외) 순으로 찾는다.
+    이름표가 없으면 모델 ID (던전마다 몹 이름이 달라 자동으로 붙이지 않는다)."""
+    import glob
+    label = None
+    if "=" in token:
+        token, label = token.split("=", 1)
+    scale = 1.0
+    if "@" in token:
+        token, s = token.rsplit("@", 1)
+        scale = float(s)
+    if os.path.isfile(token):
+        path = token
+        mid = os.path.splitext(os.path.basename(token))[0]
+    else:
+        mid = token
+        path = (files if files is not None else model_index()).get(mid)
+        if not path or not os.path.isfile(path):
+            hits = sorted(glob.glob(os.path.join("작업", "풀어본_자료", "**", mid + ".bbmodel"), recursive=True))
+            if not hits:
+                hits = sorted(h for h in glob.glob(os.path.join("**", mid + ".bbmodel"), recursive=True)
+                              if not h.replace("\\", "/").startswith(("원본/", ".git/")))
+            if not hits:
+                raise SystemExit(f"모델을 찾지 못함: {mid}")
+            path = hits[0]
+    return dict(path=os.path.abspath(path), scale=scale, key=mid, label=label or mid)
+
+
 def std_path(explicit=None):
     for p in (explicit, os.path.join("작업", "모델링", "기준.json"), "art_standard.json",
               os.path.join(SKILL, "templates", "art_standard.json")):

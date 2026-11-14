@@ -106,10 +106,20 @@ def apply(t):
         ob.matrix_world = Matrix((C @ M.element_mat(eu, gm)).tolist())
 
 
+def _pts():
+    bpy.context.view_layer.update()
+    return np.array([list(ob.matrix_world @ v.co) for _, ob in objs for v in ob.data.vertices])
+
+
+# 기본 자세(동작 없음)의 발밑을 바닥으로: 땅속에서 올라오는 등장 동작도 땅이 제자리에 있게
+gm_rest = M.group_mats()
+for eu, ob in objs:
+    ob.matrix_world = Matrix((C @ M.element_mat(eu, gm_rest)).tolist())
+rest = _pts()
 apply(0.0)
-bpy.context.view_layer.update()
-pts = np.array([list(ob.matrix_world @ v.co) for _, ob in objs for v in ob.data.vertices])
+pts = np.vstack([rest, _pts()])
 lo, hi = pts.min(0), pts.max(0); ctr = (lo + hi) / 2; ext = float(max(hi - lo))
+floor_z = min(0.0, float(rest[:, 2].min())) if rest[:, 2].min() > -0.2 else float(rest[:, 2].min())
 cam_d = ext * 2.4
 cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam")); scene.collection.objects.link(cam); scene.camera = cam
 cam.data.type = "ORTHO"; cam.data.ortho_scale = ext * 1.45
@@ -121,7 +131,7 @@ else:
     cam.location = (ctr[0] + cam_d * math.sin(yaw), ctr[1] + cam_d * math.cos(yaw), ctr[2] + cam_d * 0.35)
     tgt = bpy.data.objects.new("tgt", None); scene.collection.objects.link(tgt); tgt.location = tuple(ctr)
     c = cam.constraints.new("TRACK_TO"); c.target = tgt; c.track_axis = "TRACK_NEGATIVE_Z"; c.up_axis = "UP_Y"
-bpy.ops.mesh.primitive_plane_add(size=ext * 3, location=(ctr[0], ctr[1], lo[2] - 0.001))
+bpy.ops.mesh.primitive_plane_add(size=ext * 3, location=(ctr[0], ctr[1], floor_z - 0.001))
 # 바닥은 중간 회색, 배경은 어둡게 → 검은 모델·흰 모델 모두 바닥과 구분된다
 fm = bpy.data.materials.new("floor"); fm.diffuse_color = (0.46, 0.47, 0.50, 1); bpy.context.active_object.data.materials.append(fm)
 scene.world = bpy.data.worlds.new("bg"); scene.world.color = (0.16, 0.17, 0.20)
@@ -134,8 +144,12 @@ scene.render.image_settings.file_format = "PNG"
 
 length = float(anim["length"]) if anim else 0.0
 n = max(1, int(round(length * fps)) + 1) if anim else 1
+apply(0.0)
+bpy.ops.render.render(write_still=False)      # 예열: 첫 렌더는 텍스처·셰이더가 덜 올라와 틀릴 때가 있어 버린다
 for i in range(n):
     apply(min(length, i / fps))
     scene.render.filepath = os.path.join(outdir, f"{anim_name if anim else 'pose'}_{i:03d}.png")
     bpy.ops.render.render(write_still=True)
+import shutil
+shutil.rmtree(tmp, ignore_errors=True)
 print(f"RENDER_DONE {n} frames")
