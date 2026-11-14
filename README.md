@@ -71,26 +71,37 @@ Claude에게 "새 프로젝트야, 하네스 틀 세팅해줘"라고 하면 `new
 
 ## 다른 사람이 쓸 때
 - `global/CLAUDE.md`는 만든 사람의 작업 방식입니다(한국어 보고, 폰 Remote Control 확인 등). 설치 전에 자기 방식으로 고치세요. 설치기는 이 내용을 `~/.claude/CLAUDE.md`의 표지 주석 사이 블록으로 넣습니다.
-- 훅은 Python 3로 돌아갑니다.
+- 훅은 Python 3로 돌아갑니다. `blender-motion`·`mob-modeling`은 Blender 4.x, numpy, Pillow가 따로 필요합니다(없어도 나머지는 그대로 동작).
 - 같은 이름의 스킬이 이미 있으면 덮어쓰지 않고 건너뜁니다. 제거는 `--uninstall`.
 
 ### Claude Code에 붙여 넣는 설치 프롬프트
 ```
-YunStone Claude 하네스를 내 Claude Code에 설치해줘.
+YunStone Claude 하네스를 이 컴퓨터의 Claude Code에 설치해줘.
 저장소: https://github.com/agunessuk/YunStone_claude_Harness
 
 순서:
-1. 저장소를 내 홈 폴더 아래 `YunStone_claude_Harness`로 받아줘 (git clone). 이미 있으면 git pull로 최신화해.
-2. README.md를 읽고 이 하네스가 무엇을 바꾸는지 나에게 짧게 설명해줘.
-3. global/CLAUDE.md 내용을 보여주고, 내 작업 방식과 다른 부분이 있으면 고칠지 물어봐줘.
-4. 설치 스크립트를 --dry-run 으로 먼저 돌려서 바뀔 파일 목록을 보여줘.
+0. 먼저 git과 Python 3가 있는지 확인해줘. Python 3가 없으면 설치하지 말고 알려줘.
+1. 저장소를 홈 폴더 아래 `YunStone_claude_Harness`로 받아줘 (git clone). 이미 있으면 git pull로 최신화해.
+2. README.md를 읽고 이 하네스가 무엇을 바꾸는지 짧게 설명해줘:
+   - ~/.claude/CLAUDE.md 에 작업 원칙 블록 추가 (표지 주석 사이만 관리)
+   - ~/.claude/skills/ 에 공통 스킬 11개 추가
+   - ~/.claude/hooks/local-harness/ 에 훅 2개 추가 (원본 보호·위험 명령 확인, 세션 시작 때 PROGRESS.md 복원)
+   - ~/.claude/settings.json 에 훅 연결 추가 (먼저 백업)
+3. global/CLAUDE.md 내용을 보여주고, 그대로 쓸지 고칠지 물어봐줘.
+4. 설치 스크립트를 --dry-run 으로 먼저 돌려 바뀔 파일 목록을 보여줘.
    - Windows: powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 --dry-run
    - Mac/Linux: ./install.sh --dry-run
-5. 내가 확인하면 --dry-run 없이 설치해줘.
-6. python tests/test_hooks.py 로 훅 시험을 돌리고 결과를 알려줘.
-7. 끝나면 새 세션을 열어야 적용된다는 것과 제거 방법(--uninstall)을 알려줘.
+5. 내가 확인하면 --dry-run 없이 설치해줘. 같은 이름의 기존 스킬은 덮어쓰지 말고 건너뛰고, 건너뛴 게 있으면 알려줘.
+6. 설치가 끝나면 아래를 돌리고 결과를 표로 알려줘:
+   - python install.py --check   (훅 Python 경로, 정본과 설치본 차이, 훅 실제 판정)
+   - python tests/test_hooks.py
+   - python tests/test_new_project.py
+7. 선택 기능 점검: blender-motion·mob-modeling 스킬은 Blender 4.x, numpy, Pillow가 있어야 쓸 수 있어. 이 컴퓨터에 있는지만 확인해서 알려주고, 설치는 내가 원할 때만 해.
+8. 끝나면 이 두 가지를 알려줘:
+   - 이미 열려 있는 Claude Code 세션은 새로 열어야 적용된다는 것
+   - 제거 방법 (install 스크립트 --uninstall)
 
-Python 3가 없으면 설치하지 말고 먼저 알려줘.
+Windows에서 한글이 깨지면 PYTHONIOENCODING=utf-8 을 붙여서 실행해.
 ```
 
 ## 라이선스와 출처
