@@ -5,6 +5,7 @@
 훅 자체가 실패하면 작업을 막지 않도록 조용히 통과한다(오류는 로그에만 남김).
 """
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -23,6 +24,9 @@ DANGEROUS = [
     (r"\bRemove-Item\b[^|;]*-Recurse", "폴더째 지우는 Remove-Item -Recurse"),
     (r"\b(rd|rmdir)\s+/s\b", "폴더째 지우는 rd /s"),
     (r"\bdel\s+(/[a-zA-Z]\s+)*/s\b", "하위까지 지우는 del /s"),
+    (r"\bshutil\.rmtree\b", "폴더째 지우는 shutil.rmtree"),
+    (r"\brmSync\([^)]*recursive\s*:\s*true", "폴더째 지우는 fs.rmSync(recursive)"),
+    (r"\brimraf\b", "폴더째 지우는 rimraf"),
     (r"\bgit\s+reset\s+--hard\b", "커밋하지 않은 변경을 버리는 git reset --hard"),
     (r"\bgit\s+push\b[^|;&]*(--force\b|--force-with-lease\b|\s-f\b)", "원격 기록을 덮어쓰는 git push --force"),
     (r"\bgit\s+clean\s+-[a-zA-Z]*f", "추적하지 않는 파일을 지우는 git clean -f"),
@@ -49,7 +53,10 @@ MUTATING = re.compile(
 
 # 하네스 자기 보호: 셸 명령이 이 경로를 바꾸려 하면 확인 (경로는 소문자·슬래시로 비교)
 SELF_PATHS = (".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/local-harness",
-              ".claude/protected.txt", ".claude/readonly")
+              ".claude/protected.txt", ".claude/readonly", ".claude/approvals.json")
+
+# 사용자 승인 기록. 워크벤치가 사용자 답(1회·항상)을 받아 프로젝트 .claude/ 에 쓴다. AI는 직접 못 쓴다.
+APPROVALS = "approvals.json"
 
 
 def read_input():
@@ -148,6 +155,9 @@ def check_edit(tool_input, root, cwd):
     n = norm(path)
     if n.startswith(norm(HARNESS_DIR) + "/") or n == norm(os.path.join(HOME, ".claude", "settings.json")):
         return ("ask", f"하네스 훅이나 전역 설정을 고치려 합니다: {path}")
+    # 승인 기록은 사람(워크벤치)만 쓴다. AI가 스스로 승인을 만들 수 없게 어디서든 차단
+    if n.endswith("/.claude/" + APPROVALS):
+        return ("deny", "승인 기록(.claude/approvals.json)은 사용자와 워크벤치만 씁니다. AI가 직접 고칠 수 없습니다.")
 
     if not root:
         return None
@@ -356,6 +366,50 @@ def check_shell(command, root):
     return None
 
 
+def command_hash(command):
+    return hashlib.sha256(command.strip().replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
+def touches_self(command):
+    low = strip_heredoc_bodies(command).replace("\\", "/").lower()
+    return any(sp in low for sp in SELF_PATHS)
+
+
+def consume_approval(root, command):
+    """사용자가 미리 승인한 바로 그 명령이면 승인 항목을 돌려주고 사용 횟수를 올린다 (1회 승인은 한 번 쓰면 끝).
+    명령 문자열이 한 글자라도 다르면, 만료됐으면, 파일이 깨졌거나 기록을 못 남기면 None → 원래대로 확인 요청."""
+    if not root:
+        return None
+    path = os.path.join(root, ".claude", APPROVALS)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.load(f)
+        items = data.get("approvals", [])
+    except (OSError, ValueError, AttributeError):
+        return None
+    h, now = command_hash(command), time.time()
+    for a in items:
+        if not isinstance(a, dict) or a.get("sha256") != h:
+            continue
+        if a.get("expires") and now > float(a["expires"]):
+            continue
+        if a.get("once", True) and int(a.get("used", 0)) >= 1:
+            continue
+        a["used"] = int(a.get("used", 0)) + 1
+        a["last_used"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, path)
+        except OSError:
+            return None  # 사용 기록을 못 남기면 1회 승인이 여러 번 쓰일 수 있으니 통과시키지 않는다
+        return a
+    return None
+
+
 def main():
     data = read_input()
     tool = data.get("tool_name", "")
@@ -366,7 +420,16 @@ def main():
     if tool in EDIT_TOOLS:
         result = check_edit(tool_input, root, cwd)
     elif tool in SHELL_TOOLS:
-        result = check_shell(tool_input.get("command", ""), root)
+        command = tool_input.get("command", "")
+        result = check_shell(command, root)
+        # 확인 요청 대상이라도 사용자가 이 명령을 미리 승인했으면 통과 (하네스 설정 변경은 승인으로 못 엶)
+        if result and result[0] == "ask" and not touches_self(command):
+            a = consume_approval(root, command)
+            if a:
+                kind = "1회" if a.get("once", True) else "항상"
+                log({"tool": tool, "decision": "approved", "reason": f"사용자 승인({kind}) 사용: {result[1]}",
+                     "card": a.get("card"), "cwd": cwd})
+                result = None
     else:
         result = None
 

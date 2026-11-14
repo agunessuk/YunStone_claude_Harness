@@ -37,6 +37,29 @@ def write(path, text=""):
         f.write(text)
 
 
+def approve(project, command, once=True, expires_in=3600, card="C0001"):
+    """워크벤치가 쓰는 것과 같은 형식으로 사용자 승인을 남긴다."""
+    import hashlib
+    import time
+    path = os.path.join(project, ".claude", "approvals.json")
+    data = {"approvals": []}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    h = hashlib.sha256(command.strip().replace("\r\n", "\n").encode("utf-8")).hexdigest()
+    data["approvals"].append({"sha256": h, "command": command, "once": once,
+                              "expires": time.time() + expires_in, "used": 0, "card": card})
+    write(path, json.dumps(data, ensure_ascii=False))
+
+
+def approval_used(project, command):
+    import hashlib
+    with open(os.path.join(project, ".claude", "approvals.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    h = hashlib.sha256(command.encode("utf-8")).hexdigest()
+    return [a.get("used", 0) for a in data["approvals"] if a["sha256"] == h]
+
+
 def main():
     failures = []
 
@@ -128,8 +151,34 @@ def main():
         expect("git reset --hard", decision(proj, "Bash", {"command": "git reset --hard HEAD~1"}), "ask")
         expect("git push -f", decision(proj, "Bash", {"command": "git push -f origin main"}), "ask")
         expect("git push 보통", decision(proj, "Bash", {"command": "git push origin main"}), "pass")
+        expect("python shutil.rmtree", decision(proj, "Bash", {"command": "python -c \"import shutil; shutil.rmtree('build')\""}), "ask")
+        expect("node rmSync recursive", decision(proj, "Bash", {"command": "node -e \"require('fs').rmSync('dist', {recursive: true})\""}), "ask")
+        expect("node rmSync 파일 하나는 통과", decision(proj, "Bash", {"command": "node -e \"require('fs').rmSync('a.log')\""}), "pass")
         expect("rm 파일 하나", decision(proj, "Bash", {"command": "rm build/tmp.log"}), "pass")
         expect("ls", decision(proj, "Bash", {"command": "ls -la"}), "pass")
+
+        # 사용자 승인 (.claude/approvals.json — 워크벤치가 사용자 답을 받아 씀)
+        approve(proj, "rm -rf build")
+        expect("승인된 명령은 1회 통과", decision(proj, "Bash", {"command": "rm -rf build"}), "pass")
+        expect("1회 승인은 사용 기록이 남음", approval_used(proj, "rm -rf build"), [1])
+        expect("같은 명령 2번째는 다시 확인", decision(proj, "Bash", {"command": "rm -rf build"}), "ask")
+        approve(proj, "rm -rf dist", once=False)
+        expect("항상 승인은 여러 번 통과 (1)", decision(proj, "Bash", {"command": "rm -rf dist"}), "pass")
+        expect("항상 승인은 여러 번 통과 (2)", decision(proj, "Bash", {"command": "rm -rf dist"}), "pass")
+        expect("승인과 다른 명령은 확인", decision(proj, "Bash", {"command": "rm -rf dist2"}), "ask")
+        approve(proj, "rm -rf old", expires_in=-10)
+        expect("만료된 승인은 확인", decision(proj, "Bash", {"command": "rm -rf old"}), "ask")
+        approve(proj, "rm input/a.txt")
+        expect("보호 원본 명령도 사용자가 승인하면 1회 통과", decision(proj, "Bash", {"command": "rm input/a.txt"}), "pass")
+        approve(proj, "echo {} > ~/.claude/settings.json")
+        expect("하네스 설정 변경은 승인으로도 못 엶", decision(proj, "Bash", {"command": "echo {} > ~/.claude/settings.json"}), "ask")
+        expect("AI가 승인 기록을 직접 쓰면 차단", decision(proj, "Write", {"file_path": p(".claude", "approvals.json")}), "deny")
+        expect("AI가 승인 기록 고치기도 차단 (대소문자)", decision(proj, "Edit", {"file_path": p(".claude", "Approvals.JSON")}), "deny")
+        expect("셸로 승인 기록 쓰기는 확인", decision(proj, "Bash", {"command": "echo [] > .claude/approvals.json"}), "ask")
+        write(p(".claude", "approvals.json"), "{깨진 json")
+        expect("승인 기록이 깨져 있으면 안전하게 확인", decision(proj, "Bash", {"command": "rm -rf dist"}), "ask")
+        os.remove(p(".claude", "approvals.json"))
+        expect("승인 기록이 없으면 원래대로 확인", decision(proj, "Bash", {"command": "rm -rf dist"}), "ask")
 
         # H3 읽기 전용 모드
         write(p(".claude", "READONLY"), "review/claude/\n")

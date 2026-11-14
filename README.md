@@ -34,9 +34,12 @@ Mac: `./install.sh` (옵션 같음)
 | 위험 명령 확인 | `rm -r`, `Remove-Item -Recurse`, `git reset --hard`, `git push --force`, `git clean -f` 등은 실행 전에 **확인 요청** | 항상 켜짐 |
 | 읽기 전용 모드 | 허용한 폴더 밖 파일 수정은 **차단**, 파일을 바꾸는 셸 명령은 **확인 요청** | 프로젝트에 `.claude/READONLY` (지우면 꺼짐) |
 | 상태 복원 | 세션 시작·재개·문맥 압축 뒤 `PROGRESS.md`, 읽기 전용 여부, 보호 목록을 자동으로 알려 줌 | 프로젝트 루트에 `PROGRESS.md` |
-| 자기 보호 | 훅 파일, `settings.json`, 프로젝트의 `protected.txt`·`READONLY` 수정은 파일 도구든 셸이든 **확인 요청** | 항상 켜짐 |
+| 자기 보호 | 훅 파일, `settings.json`, 프로젝트의 `protected.txt`·`READONLY`·`approvals.json` 수정은 파일 도구든 셸이든 **확인 요청** (AI가 `approvals.json`을 파일 도구로 쓰면 **차단**) | 항상 켜짐 |
+| 사용자 승인 | 확인 요청에 걸린 셸 명령을 사용자가 미리 승인해 두면 **그 명령 문자열 그대로일 때만** 통과. 1회 승인은 한 번 쓰면 끝, 만료 시각 있음. 하네스 설정 변경은 승인으로도 못 엶 | 프로젝트에 `.claude/approvals.json` (워크벤치가 사용자 답을 받아 씀) |
 
-- 차단·확인 기록: `~/.claude/local-harness-log/events.jsonl`
+- 차단·확인·승인 사용 기록: `~/.claude/local-harness-log/events.jsonl`
+- 승인이 필요한 이유: 헤드리스 실행(`claude -p`)에서는 확인 요청을 받을 사람이 없어 자동 거부된다. 사람이 나중에 "이 명령 1번 허락"이라고 답하면 그 명령만 통과시켜 작업을 이어 갈 수 있다.
+- `approvals.json` 형식: `{"approvals": [{"sha256": 명령 문자열(앞뒤 공백 제거)의 sha256, "command": 명령, "once": true, "expires": 유닉스 시각, "used": 0}]}`
 - 셸 명령 검사는 글자 패턴으로 하는 대략적인 검사라서 차단하지 않고 확인만 받습니다. 셸 동사(rm, cp, >)뿐 아니라 `python -c`·`node -e`의 파일 쓰기, `[IO.File]::Write…`, `find -delete`, 압축 풀기도 봅니다.
 - 알려진 빈틈: `python 스크립트.py input/a.txt`처럼 **스크립트 파일 안에서** 원본을 쓰는 것은 명령만 봐서는 알 수 없어 통과합니다.
 - 훅은 고장 나면 조용히 통과합니다. Python을 다시 깔았거나 이상하면 `python install.py --check`로 점검합니다.
