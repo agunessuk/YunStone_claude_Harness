@@ -19,6 +19,7 @@
 | status-report | FOD `evidence-status-report` | 사용자 관점 표현, 내부 코드명 풀어쓰기 |
 | project-index | 새로 작성 | 파일 ID 색인 요청을 근거로 함 |
 | env-and-cleanup | FOD `windows-env-pitfalls`, `macos-env-pitfalls`, `agent-resource-hygiene`, `safe-cleanup` | 해당 항목만 남겨 하나로 합침 |
+| blender-motion | 새로 작성 | 베어타이쿤 던전팩 작업에서 검증한 과정을 묶음: 기존 동작을 Blender 로 렌더해 Blockbench 부호 규칙 확인, 해골 3종·수호목 골렘 새 동작 제작, 팩 동작을 판정 틱에 맞춰 연결 |
 
 ## 변경 기록
 - 2026-11-13 v1: 훅 2개(guard, session_restore), 스킬 8개, 전역 CLAUDE.md, 설치기
@@ -26,3 +27,4 @@
 - 2026-11-14 v1.2: 자체 평가에서 나온 문제 수정. 대소문자 다른 경로 우회 차단, `python -c`·`node -e`·.NET·`find -delete`·압축 풀기 쓰기 감지, 셸로 settings.json·훅·보호 목록 수정 시 확인, 글롭 보호(`plugins/*.jar`) 오탐 축소, 시험이 실제 기록 파일을 더럽히지 않게 함, `install.py --check` 점검 추가, `new-project` 스킬과 표준 폴더(templates/project → skills/new-project/template), 피드백 기록(FEEDBACK_LOG.md), 스킬 폴더 이름 통일. 시험 65개 + 틀 시험
 - 2026-11-14 v1.3: 보호 경로 오탐 축소. cat·tee 히어독 본문(파일 내용)과 코드 속 낱말('input', <input>)은 보호 폴더로 보지 않음. 쓰는 대상이 보호 폴더이거나 폴더 이름이 셸 낱말로 쓰이면 그대로 확인. 시험 69개
 - 2026-11-14 v1.4: 사용자 승인(`.claude/approvals.json`). 확인 요청에 걸린 셸 명령을 사용자가 승인하면 같은 문자열일 때만 통과(1회·항상, 만료). AI는 승인 기록을 직접 못 씀, 하네스 설정 변경은 승인 대상 아님, 기록이 깨지면 원래대로 확인. 폴더째 지우기에 shutil.rmtree·fs.rmSync(recursive)·rimraf 추가. 시험 86개
+- 2026-11-14 v1.5: `blender-motion` 스킬 추가. 스크립트 5개(bbpose 자세 계산, inspect_model 모델·기본 자세·정점 점검, make_motion 생성·수치 검사·렌더, pose_check 바닥 뚫림·몸 이동·발 끌림·끊김, blender_preview 정면·옆·위 렌더), 규칙 문서 3개(좌표·부호·덮어쓰기, 동작 설계 사람형·네발, MythicMobs 연결·Template 주의), 설계 예시. 원본 .bbmodel 보호(복사본에만 쓰기, 기존 동작 이름 겹치면 거부). 스킬만 보고 새 모델(엔더 망치머리) 동작을 만드는 시험을 한 번 돌려 나온 문제를 반영. 시험 25개(`tests/test_blender_motion.py`)

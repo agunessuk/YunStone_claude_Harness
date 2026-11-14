@@ -21,10 +21,11 @@ Mac: `./install.sh` (옵션 같음)
 | 위치 | 내용 |
 |---|---|
 | `global/CLAUDE.md` | 항상 적용할 원칙 → `~/.claude/CLAUDE.md` 블록 |
-| `skills/` | 필요할 때 꺼내 쓰는 절차 9개 → `~/.claude/skills/` |
+| `skills/` | 필요할 때 꺼내 쓰는 절차 10개 → `~/.claude/skills/` |
 | `hooks/` | 실제로 막거나 자동 실행하는 훅 → `~/.claude/hooks/local-harness/` |
 | `skills/new-project/` | 표준 프로젝트 틀(`template/`)과 만드는 스크립트(`scripts/new_project.py`) |
-| `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py` |
+| `skills/blender-motion/` | 몹 모션 스크립트(`scripts/`), 설계 예시(`templates/`), 좌표·설계·연결 규칙(`references/`) |
+| `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py`, `python tests/test_blender_motion.py` |
 
 ## 훅이 하는 일
 
@@ -57,6 +58,7 @@ Mac: `./install.sh` (옵션 같음)
 | `status-report` | 진행 상황과 최종 보고 |
 | `project-index` | 토큰을 아끼는 README·파일 색인 |
 | `env-and-cleanup` | Windows·Mac 함정, 서버·프로세스·파일 정리 |
+| `blender-motion` | 마인크래프트 ModelEngine 몹·보스(.bbmodel)에 Blender로 3D 모션을 만들어 넣고, MythicMobs 판정 타이밍에 연결 (Blender·numpy·Pillow 필요) |
 
 ## 새 프로젝트에 적용하기
 Claude에게 "새 프로젝트야, 하네스 틀 세팅해줘"라고 하면 `new-project` 스킬이 아래를 대신합니다. 직접 할 때:
