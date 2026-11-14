@@ -2,19 +2,20 @@
 
 사용 (프로젝트 루트에서):
   python -I <스킬>/scripts/reshade.py <원본.bbmodel> <출력.bbmodel> [옵션]
-옵션 (기본값은 기준.json 의 해골 맞춤 안):
+옵션 (목표 --val·--contrast 는 그 몹 스타일 프로필 범위 안에서 고른다: lint.py 의 [스타일] 줄):
   --val 0.58       목표 평균 명도(V). 어두운 테마는 0.36 정도
   --contrast 0.18  목표 명암 폭(밝기 표준편차)
   --steps 6        재질마다 색 계단 수 (색 수 = 재질 수 × 계단 수)
   --edge 1.5       면 테두리 1px(와 찢어진 구멍 둘레)를 계단 몇 칸만큼 어둡게 (0 이면 안 함)
   --grad 0.16      옆면 위→아래 밝기 차 (위가 밝음)
   --noise 0.06     픽셀 결 (1~2px 얼룩, 계단에 맞춰 떨어짐)
-  --center 0.10    5px 이상 면의 가운데를 조금 밝게 (해골 계열 스타일)
+  --center 0.10    5px 이상 면의 가운데를 조금 밝게 (테두리 있는 스타일. 평면 스타일이면 0)
   --keep 0.75      원래 명암을 얼마나 살릴지 (1 = 원래 무늬 그대로, 0 = 구조 음영만)
-  --tint #RRGGBB:0.2  모든 재질 색을 던전 테마 색 쪽으로 조금 당김 (선택)
+  --tint #RRGGBB:0.2  모든 재질 색을 던전 테마 색 쪽으로 조금 당김 (선택, adjust·ramp 둘 다)
   --seed 1         결 무늬 시드 (같은 시드 → 같은 결과)
   --protect #e07a1f,#ffd34a  이 색과 가까운 재질은 다시 칠하지 않는다 (몹의 상징색: 호박 주황, 눈빛 등)
-  --mode adjust    기본: 원래 색(색상·채도)을 두고 밝기만 조정 → 상징색이 바뀌지 않는다
+  --sat 0.40       (선택) 목표 평균 채도 — adjust 는 어두워지는 곳의 채도를 조금 올리므로 프로필 채도 상한에 걸리면 준다
+  --mode adjust    기본: 원래 색상을 두고 밝기 위주로 조정(어두운 곳 채도 +25%, 밝은 곳 −15% 까지) → 상징색이 바뀌지 않는다
          ramp      재질마다 새 색 계단으로 다시 칠함 (단조로운 텍스처: 색95 ≤ 6 또는 명암 폭 < 0.08. 색이 바뀔 수 있음 → 렌더로 꼭 확인)
 원본은 읽기만 한다. 출력은 원본 복사본에 텍스처만 바꾼 것.
 """
@@ -93,8 +94,9 @@ def lerp_angle(a, b, t):
 SHADOW_H, LIGHT_H = math.radians(285), math.radians(85)   # 그림자는 보라·파랑 쪽, 밝은 곳은 노랑 쪽
 
 
-def ramp(base_lab, center, half, steps, tint=None):
-    """재질 하나의 색 계단: 어두운 → 밝은. 색상은 그림자 쪽으로 푸르게, 밝은 쪽으로 따뜻하게 조금 옮긴다."""
+def ramp(base_lab, center, half, steps, tint=None, hue=1.0):
+    """재질 하나의 색 계단: 어두운 → 밝은. 색상은 그림자 쪽으로 푸르게, 밝은 쪽으로 따뜻하게 조금 옮긴다.
+    hue: 그 옮기는 정도 (1 = 기본, 0 = 색상·채도 그대로 밝기만 — 팔레트가 좁은 평면 스타일 팩)."""
     L0, a0, b0 = base_lab
     C0 = math.hypot(a0, b0)
     h0 = math.atan2(b0, a0) if C0 > 1e-6 else SHADOW_H
@@ -107,11 +109,11 @@ def ramp(base_lab, center, half, steps, tint=None):
         u = i / (steps - 1) * 2 - 1                      # -1 그림자 … +1 밝음
         L = float(np.clip(center + half * u, 0.08, 0.97))
         if u < 0:
-            h = lerp_angle(h0, SHADOW_H, 0.28 * -u)
-            C = (C0 if C0 > 0.02 else 0.018) * (1 + 0.25 * -u)
+            h = lerp_angle(h0, SHADOW_H, 0.28 * -u * hue)
+            C = (C0 if (C0 > 0.02 or hue == 0) else 0.018 * hue) * (1 + 0.25 * -u * hue)
         else:
-            h = lerp_angle(h0, LIGHT_H, 0.18 * u)
-            C = (C0 if C0 > 0.02 else 0.010) * (1 - 0.15 * u)
+            h = lerp_angle(h0, LIGHT_H, 0.18 * u * hue)
+            C = (C0 if (C0 > 0.02 or hue == 0) else 0.010 * hue) * (1 - 0.15 * u * hue)
         out.append(in_gamut(L, C, h))
     return np.array(out)
 
@@ -218,7 +220,7 @@ def materials(lab, k_max=6, merge=0.035):
 
 
 def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=0.16, noise=0.06, keep=0.75,
-            tint=None, seed=1, center=0.10, protect=(), mode="adjust", verbose=True):
+            tint=None, seed=1, center=0.10, protect=(), mode="adjust", sat=None, verbose=True):
     bbpose = metrics._bbpose()
     model = bbpose.Model(path_in)
     m = model.m
@@ -311,8 +313,10 @@ def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=
             cent = new
         return cent[lbl]
 
-    def render_adjust(shift, k):
-        """원래 색을 두고 밝기만 바꾼다: 대비 k 배 + 이동 + 구조 음영(계단 단위). 어두워지는 곳은 살짝 푸르고 진하게."""
+    def render_adjust(shift, k, csc=1.0):
+        """원래 색을 두고 밝기를 바꾼다: 대비 k 배 + 이동 + 구조 음영(계단 단위).
+        어두워지는 곳은 살짝 푸르고 진하게(채도 +), 밝아지는 곳은 살짝 따뜻하고 옅게. csc: 채도 배율(--sat 목표용).
+        tint 가 있으면 유채색 픽셀의 색상을 테마 색 쪽으로 당긴다."""
         out = np.zeros_like(all_rgb)
         for gi, g in enumerate(groups):
             if keep_group[gi]:
@@ -328,7 +332,12 @@ def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=
             dn = np.clip(-d / 0.2, 0, 1); up = np.clip(d / 0.2, 0, 1)
             hs = np.array([lerp_angle(hh, SHADOW_H, 0.09 * a) if a > 0 else lerp_angle(hh, LIGHT_H, 0.06 * b)
                            for hh, a, b in zip(h, dn, up)])
-            C2 = C * (1 + 0.25 * dn) * (1 - 0.15 * up)
+            C2 = C * (1 + 0.25 * dn) * (1 - 0.15 * up) * csc
+            if tint_p is not None:
+                _, tC, th, amt = tint_p
+                chrom = C > 0.02
+                hs = np.where(chrom, np.array([lerp_angle(hh, th, amt) for hh in hs]), th)
+                C2 = np.where(chrom, C2 * (1 - amt) + tC * amt, C2 + tC * amt * 0.5)
             lab2 = np.stack([L2, C2 * np.cos(hs), C2 * np.sin(hs)], 1)
             lab2 = quantize(lab2, steps + 1)
             out[g] = np.clip(from_oklab(lab2), 0, 1)
@@ -364,13 +373,16 @@ def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=
             half = float(np.clip(half * (contrast / max(c, 1e-3)) ** 0.7, 0.04, 0.45))
         res = render(shift, half)
     else:
-        shift, half = 0.0, 1.0           # half 자리에 대비 배율 k
+        shift, half, csc = 0.0, 1.0, 1.0           # half 자리에 대비 배율 k, csc 채도 배율
         for _ in range(12):
-            res = render_adjust(shift, half)
+            res = render_adjust(shift, half, csc)
             v, c = stats(res)
             shift += (val - v) * 0.8
             half = float(np.clip(half * (contrast / max(c, 1e-3)) ** 0.8, 0.5, 2.5))
-        res = render_adjust(shift, half)
+            if sat is not None:
+                s_now = float(np.where(res.max(1) > 0, (res.max(1) - res.min(1)) / np.maximum(res.max(1), 1e-9), 0).mean())
+                csc = float(np.clip(csc * (sat / max(s_now, 1e-3)) ** 0.8, 0.2, 2.0))
+        res = render_adjust(shift, half, csc)
     # 다시 텍스처에 쓰기
     pos = 0
     for ti, vis in pix:
@@ -385,6 +397,10 @@ def reshade(path_in, path_out, val=0.58, contrast=0.18, steps=6, edge=1.0, grad=
         m["textures"][ti]["source"] = bbtex.encode_png(img)
     bbtex.save(m, path_out)
     v_end, c_end = stats(res)
+    if verbose and mode == "adjust" and (half <= 0.5 + 1e-6 or half >= 2.5 - 1e-6):
+        print(f"알림: 대비 배율이 한계({half:.2f})에 걸림 — 명암 폭 {c_end:.3f} (목표 {contrast})")
+    if verbose and abs(v_end - val) > 0.1 * max(val, 0.05):
+        print(f"알림: 명도 {v_end:.3f} 가 목표 {val} 에서 10% 넘게 벗어남")
     if verbose and mode == "adjust" and c_end < 0.9 * contrast:
         print(f"알림: 원래 색만으로는 명암 폭이 {c_end:.3f} 까지만 올라감 (목표 {contrast}). 원본이 단조로우면"
               f"(색95 ≤ 6 또는 명암 폭 < 0.08) --mode ramp 를 쓰고, 상징색은 --protect 로 지킨다")
@@ -405,12 +421,13 @@ def main(argv):
     ap.add_argument("--center", type=float, default=0.10)
     ap.add_argument("--protect", default="", help="그대로 둘 색 (쉼표로): 예 #e07a1f,#ffd34a — 몹의 상징색")
     ap.add_argument("--mode", default="adjust", choices=["adjust", "ramp"])
+    ap.add_argument("--sat", type=float, default=None, help="목표 평균 채도 (예: 0.40) — 프로필 채도 범위에 맞출 때")
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args(argv)
     if os.path.abspath(a.src) == os.path.abspath(a.dst):
         raise SystemExit("원본에 덮어쓰지 않는다. 출력 경로를 따로 주세요.")
     reshade(a.src, a.dst, a.val, a.contrast, a.steps, a.edge, a.grad, a.noise, a.keep, a.tint, a.seed, a.center,
-            [x for x in a.protect.split(",") if x.strip()], a.mode)
+            [x for x in a.protect.split(",") if x.strip()], a.mode, a.sat)
     r = metrics.measure(a.dst)
     print({k: r.get(k) for k in ("colors95", "val", "contrast", "noise", "edge_dark", "top_light")})
 

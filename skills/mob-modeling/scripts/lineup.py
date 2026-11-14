@@ -12,6 +12,7 @@
   --bright: 0.5 처럼 주면 어두운 던전 느낌 (조명 곱)
   --yaw 28: 모델을 돌리는 각도 (0 = 정면, 90 = 옆, 180 = 뒤)
   --back  : 줄마다 뒷모습 줄을 하나 더 (등 망토·뒤 장식 확인)
+  --bind  : 대기 동작 첫 자세 대신 Blockbench 기본(bind) 자세로 세운다
 """
 import glob, json, os, subprocess, sys, tempfile
 
@@ -36,10 +37,20 @@ def resolve(token, names=None, files=None):
     return skilldeps.resolve(token, files)
 
 
-def render(specs, out, title="", stats=False, ppb=110, per_row=6, bright=1.0, player=True, yaw=28, back=False, views=None):
+def render(specs, out, title="", stats=False, ppb=110, per_row=6, bright=1.0, player=True, yaw=28, back=False, views=None,
+           rest=True):
     """specs: [dict(path, scale, key, label[, pose=[동작, 초]])] → 이름표 붙인 라인업 PNG.
-    back=True 면 줄마다 뒷모습(yaw+180) 줄을 하나 더. views=[(각도, 표시), …] 로 시점을 직접 줄 수도 있다."""
+    back=True 면 줄마다 뒷모습(yaw+180) 줄을 하나 더. views=[(각도, 표시[, 밝기]), …] 로 시점·밝기를 직접 줄 수도 있다.
+    rest=True 면 동작을 안 준 몹은 대기 동작(idle) 0초 자세로 세운다(팩이 기본 자세를 idle 에 깔아 둔 경우 인게임 모습)."""
     import skilldeps
+    global LABEL_PX
+    try:                                   # 칸 폭 = 가장 긴 이름표(또는 수치 줄) + 여백 → 이름표끼리 겹치지 않게
+        f22 = font(22)
+        tags = [v[1] for v in (views or [])] + (["뒤"] if back else [])
+        longest_tag = max([f22.getlength(f" ({t})") for t in tags if t] + [0])
+        LABEL_PX = int(max([210] + [f22.getlength(s["label"]) + longest_tag + 24 for s in specs]))
+    except Exception:
+        LABEL_PX = 210
     for k, s in enumerate(specs):          # 같은 모델을 여러 번 세울 때 key 가 겹치지 않게
         if sum(1 for x in specs[:k] if x["key"] == s["key"]):
             s["key"] = f"{s['key']}#{k}"
@@ -52,10 +63,12 @@ def render(specs, out, title="", stats=False, ppb=110, per_row=6, bright=1.0, pl
     for r0 in range(0, len(specs), per_row):
         row = specs[r0:r0 + per_row]
         vlist = views or ([(yaw, ""), (yaw + 180, "뒤")] if back else [(yaw, "")])
-        for vi, (view_yaw, tag) in enumerate(vlist):
+        for vi, v in enumerate(vlist):
+            view_yaw, tag = v[0], v[1]
+            vb = v[2] if len(v) > 2 else bright
             raw = out[:-4] + f"_raw{r0}_{vi}.png"
             cfg = dict(models=[dict(path=s["path"], scale=s["scale"], key=s["key"], pose=s.get("pose")) for s in row],
-                       out=raw, px_per_blk=ppb, bright=bright, player=player, label_px=LABEL_PX, yaw=view_yaw,
+                       out=raw, px_per_blk=ppb, bright=vb, player=player, label_px=LABEL_PX, yaw=view_yaw, rest=rest,
                        bbpose_dir=skilldeps.blender_motion_dir())
             with tempfile.TemporaryDirectory() as td:
                 cp = os.path.join(td, "lineup.json")
@@ -74,7 +87,7 @@ def render(specs, out, title="", stats=False, ppb=110, per_row=6, bright=1.0, pl
 
 
 def main(argv):
-    out, title, stats, ppb, per_row, bright, player, yaw, back = None, "", False, 110, 6, 1.0, True, 28.0, False
+    out, title, stats, ppb, per_row, bright, player, yaw, back, rest = None, "", False, 110, 6, 1.0, True, 28.0, False, True
     items, i = [], 0
     while i < len(argv):
         a = argv[i]
@@ -85,6 +98,7 @@ def main(argv):
         if a == "--bright": bright = float(argv[i + 1]); i += 2; continue
         if a == "--yaw": yaw = float(argv[i + 1]); i += 2; continue
         if a == "--back": back = True; i += 1; continue
+        if a == "--bind": rest = False; i += 1; continue
         if a == "--stats": stats = True; i += 1; continue
         if a == "--no-player": player = False; i += 1; continue
         items.append(a); i += 1
@@ -92,7 +106,8 @@ def main(argv):
         raise SystemExit(__doc__)
     import skilldeps
     files = skilldeps.model_index()
-    return render([skilldeps.resolve(t, files) for t in items], out, title, stats, ppb, per_row, bright, player, yaw, back)
+    return render([skilldeps.resolve(t, files) for t in items], out, title, stats, ppb, per_row, bright, player, yaw, back,
+                  rest=rest)
 
 
 LABEL_PX = 210
@@ -100,7 +115,9 @@ LABEL_PX = 210
 
 def font(sz):
     from PIL import ImageFont
-    for f in ("C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf", "/System/Library/Fonts/AppleSDGothicNeo.ttc"):
+    for f in ("C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf", "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+              "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+              "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"):
         if os.path.isfile(f):
             return ImageFont.truetype(f, sz)
     return ImageFont.load_default()
