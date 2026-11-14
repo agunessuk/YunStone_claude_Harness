@@ -3,6 +3,7 @@
   python install.py              설치 또는 갱신
   python install.py --dry-run    바꾸지 않고 할 일만 출력
   python install.py --uninstall  이 하네스가 설치한 것만 제거
+  python install.py --check      설치 상태 점검 (훅 Python 경로, 정본·설치본 차이, 훅 동작)
 
 설치하는 것
   ~/.claude/skills/<스킬>          표지 파일(.local-harness)이 있는 폴더만 교체. 같은 이름의 남의 스킬은 건너뜀
@@ -177,11 +178,78 @@ def install_settings(plan, uninstall=False):
             f.write("\n")
 
 
+# ---------- 점검 ----------
+def check():
+    """설치 상태 점검. 훅은 실패하면 조용히 통과하도록 만들어서, 꺼져도 티가 안 난다. 그래서 따로 본다."""
+    import filecmp
+    import re as _re
+    import subprocess
+    problems = []
+    path = os.path.join(CLAUDE_HOME, "settings.json")
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            settings = json.load(f)
+    except (OSError, ValueError) as e:
+        settings = {}
+        problems.append(f"settings.json을 읽지 못함: {e}")
+    for event in ("PreToolUse", "SessionStart"):
+        cmds = [h.get("command", "") for g in settings.get("hooks", {}).get(event, []) for h in g.get("hooks", [])
+                if "local-harness" in h.get("command", "")]
+        if not cmds:
+            problems.append(f"{event} 훅이 연결되어 있지 않음 → install.py 다시 실행")
+            continue
+        exe = (_re.findall(r'"([^"]+)"', cmds[0]) or [""])[0]
+        if not os.path.isfile(exe):
+            problems.append(f"{event} 훅의 Python이 없음: {exe} (Python을 다시 깔았거나 옮김) → install.py 다시 실행")
+        else:
+            print(f"OK  {event} 훅 Python: {exe}")
+    for fn in ("guard.py", "session_restore.py"):
+        src, dst = os.path.join(REPO, "hooks", fn), os.path.join(HOOK_DIR, fn)
+        if not os.path.isfile(dst):
+            problems.append(f"훅 파일 없음: {dst}")
+        elif not filecmp.cmp(src, dst, shallow=False):
+            problems.append(f"설치된 훅이 정본과 다름: {fn} → install.py 다시 실행")
+        else:
+            print(f"OK  훅 파일 {fn} = 정본")
+    for name in sorted(os.listdir(os.path.join(REPO, "skills"))):
+        src = os.path.join(REPO, "skills", name, "SKILL.md")
+        dst = os.path.join(CLAUDE_HOME, "skills", name, "SKILL.md")
+        if not os.path.isfile(src):
+            continue
+        if not os.path.isfile(dst):
+            problems.append(f"스킬 미설치: {name}")
+        elif not filecmp.cmp(src, dst, shallow=False):
+            problems.append(f"설치된 스킬이 정본과 다름: {name} (설치본을 직접 고쳤으면 정본에 옮긴 뒤 재설치)")
+        else:
+            print(f"OK  스킬 {name} = 정본")
+    # 훅이 실제로 판정을 내리는지: rm -rf 는 언제나 확인 요청이어야 한다
+    guard = os.path.join(HOOK_DIR, "guard.py")
+    if os.path.isfile(guard):
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -rf build"}, "cwd": REPO}).encode()
+        r = subprocess.run([sys.executable, guard], input=payload, capture_output=True, timeout=20)
+        if b'"ask"' in r.stdout:
+            print("OK  훅 판정 동작 (rm -rf → 확인 요청)")
+        else:
+            problems.append("훅이 판정을 내지 않음 (rm -rf 가 통과됨)")
+    print()
+    if problems:
+        print(f"문제 {len(problems)}건:")
+        for p in problems:
+            print(" - " + p)
+    else:
+        print("점검 통과")
+    return 1 if problems else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="로컬 하네스 설치기")
     ap.add_argument("--dry-run", action="store_true", help="바꾸지 않고 할 일만 출력")
     ap.add_argument("--uninstall", action="store_true", help="이 하네스가 설치한 것만 제거")
+    ap.add_argument("--check", action="store_true", help="설치 상태 점검(훅 Python 경로, 정본과 설치본 차이, 훅 동작)")
     args = ap.parse_args()
+
+    if args.check:
+        sys.exit(check())
 
     plan = Plan(args.dry_run)
     plan.say(f"대상: {CLAUDE_HOME}")

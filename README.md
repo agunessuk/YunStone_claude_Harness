@@ -21,28 +21,31 @@ Mac: `./install.sh` (옵션 같음)
 | 위치 | 내용 |
 |---|---|
 | `global/CLAUDE.md` | 항상 적용할 원칙 → `~/.claude/CLAUDE.md` 블록 |
-| `skills/` | 필요할 때 꺼내 쓰는 절차 8개 → `~/.claude/skills/` |
+| `skills/` | 필요할 때 꺼내 쓰는 절차 9개 → `~/.claude/skills/` |
 | `hooks/` | 실제로 막거나 자동 실행하는 훅 → `~/.claude/hooks/local-harness/` |
-| `templates/project/` | 프로젝트에 복사해 쓰는 파일 (보호 목록, 읽기 전용, 진행 기록, 품질 기준) |
-| `tests/` | 훅 시험: `python tests/test_hooks.py` |
+| `skills/new-project/` | 표준 프로젝트 틀(`template/`)과 만드는 스크립트(`scripts/new_project.py`) |
+| `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py` |
 
 ## 훅이 하는 일
 
 | 훅 | 동작 | 켜는 법 |
 |---|---|---|
-| 원본 보호 | 목록에 있는 경로를 Edit·Write로 고치면 **차단**, 셸 명령으로 건드리면 **확인 요청** | 프로젝트에 `.claude/protected.txt` |
+| 원본 보호 | 목록에 있는 경로를 Edit·Write로 고치면 **차단**(대소문자 구별 없음), 셸 명령으로 건드리면 **확인 요청**. 글롭 패턴(`plugins/*.jar`)은 맞는 파일·폴더 자체·와일드카드일 때만 확인 | 프로젝트에 `.claude/protected.txt` |
 | 위험 명령 확인 | `rm -r`, `Remove-Item -Recurse`, `git reset --hard`, `git push --force`, `git clean -f` 등은 실행 전에 **확인 요청** | 항상 켜짐 |
 | 읽기 전용 모드 | 허용한 폴더 밖 파일 수정은 **차단**, 파일을 바꾸는 셸 명령은 **확인 요청** | 프로젝트에 `.claude/READONLY` (지우면 꺼짐) |
 | 상태 복원 | 세션 시작·재개·문맥 압축 뒤 `PROGRESS.md`, 읽기 전용 여부, 보호 목록을 자동으로 알려 줌 | 프로젝트 루트에 `PROGRESS.md` |
-| 자기 보호 | 훅 파일과 `~/.claude/settings.json` 수정은 **확인 요청** | 항상 켜짐 |
+| 자기 보호 | 훅 파일, `settings.json`, 프로젝트의 `protected.txt`·`READONLY` 수정은 파일 도구든 셸이든 **확인 요청** | 항상 켜짐 |
 
 - 차단·확인 기록: `~/.claude/local-harness-log/events.jsonl`
-- 셸 명령 검사는 글자 패턴으로 하는 대략적인 검사라서 차단하지 않고 확인만 받습니다.
+- 셸 명령 검사는 글자 패턴으로 하는 대략적인 검사라서 차단하지 않고 확인만 받습니다. 셸 동사(rm, cp, >)뿐 아니라 `python -c`·`node -e`의 파일 쓰기, `[IO.File]::Write…`, `find -delete`, 압축 풀기도 봅니다.
+- 알려진 빈틈: `python 스크립트.py input/a.txt`처럼 **스크립트 파일 안에서** 원본을 쓰는 것은 명령만 봐서는 알 수 없어 통과합니다.
+- 훅은 고장 나면 조용히 통과합니다. Python을 다시 깔았거나 이상하면 `python install.py --check`로 점검합니다.
 
 ## 스킬
 
 | 스킬 | 언제 |
 |---|---|
+| `new-project` | 새 프로젝트 시작, 하네스 틀 세팅 (표준 폴더·기준 파일·보호 목록을 스크립트로) |
 | `resume-work` | 끊긴 작업 이어가기, PROGRESS.md 관리 |
 | `feedback-round` | 번호 피드백 반영, 반복 지적을 품질 기준으로 굳히기 |
 | `handoff-pack` | 다른 AI·사람·PC로 인계본 만들기 |
@@ -53,9 +56,11 @@ Mac: `./install.sh` (옵션 같음)
 | `env-and-cleanup` | Windows·Mac 함정, 서버·프로세스·파일 정리 |
 
 ## 새 프로젝트에 적용하기
-1. `templates/project/`의 파일을 프로젝트 루트에 복사합니다.
-2. `.claude/protected.txt`에 원본 경로를 적습니다.
-3. 분석만 시킬 때는 `.claude/READONLY.example`의 이름을 `READONLY`로 바꿉니다.
+Claude에게 "새 프로젝트야, 하네스 틀 세팅해줘"라고 하면 `new-project` 스킬이 아래를 대신합니다. 직접 할 때:
+1. `python skills/new-project/scripts/new_project.py "<프로젝트 폴더>" --dry-run`으로 미리 보고, `--dry-run`을 빼고 실행합니다. 이미 있는 파일은 덮어쓰지 않습니다.
+2. 표준 폴더: `input/`(원본, 보호) `work/` `output/` `output/확정/`(보호) `handoff/`(zip 보호) `review/` `prompts/` `docs/`
+3. 원본이 따로 있으면 `.claude/protected.txt`에 경로를 더 적습니다.
+4. 분석만 시킬 때는 `.claude/READONLY.example`을 `READONLY`로 복사합니다.
 
 ## 다른 사람이 쓸 때
 - `global/CLAUDE.md`는 만든 사람의 작업 방식입니다(한국어 보고, 폰 Remote Control 확인 등). 설치 전에 자기 방식으로 고치세요. 설치기는 이 내용을 `~/.claude/CLAUDE.md`의 표지 주석 사이 블록으로 넣습니다.

@@ -1,12 +1,12 @@
 # 진행 기록
-갱신: YYYY-MM-DD HH:MM
+갱신: {{DATE}}
 
 ## 목표
 (사용자가 한 말 그대로 한두 줄)
 
 ## 지금 단계
+- [x] 0. 하네스 표준 틀 세팅 ({{DATE}})
 - [ ] 1.
-- [ ] 2.
 
 ## 다음 할 일
 1.
@@ -18,4 +18,4 @@
 -
 
 ## 원본·보호
-- `.claude/protected.txt` 참고
+- `.claude/protected.txt` 참고 (기본: `input/`, `output/확정/`, `handoff/*.zip`)

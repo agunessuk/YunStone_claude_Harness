@@ -37,9 +37,19 @@ MUTATING = re.compile(
     r"|\bRemove-Item\b|\bMove-Item\b|\bCopy-Item\b|\bRename-Item\b|\bSet-Content\b|\bAdd-Content\b"
     r"|\bOut-File\b|\bNew-Item\b|\bClear-Content\b|\bsed\s+-i\b|\btruncate\b|\btouch\b|\bmkdir\b"
     r"|\bgit\s+(commit|checkout|reset|restore|clean|stash|merge|rebase|pull|apply|rm|mv)\b"
-    r"|\b(npm|pnpm|yarn|pip)\s+(install|uninstall|add|remove)\b|\btee\b|(^|[^0-9&>])>>?(?!&))",
+    r"|\b(npm|pnpm|yarn|pip)\s+(install|uninstall|add|remove)\b|\btee\b|(^|[^0-9&>])>>?(?!&)"
+    # 셸 동사 없이 파일을 바꾸는 방법: 인라인 코드(python -c, node -e, 히어독), .NET, find, 압축 풀기, 내려받기
+    r"|\bopen\([^)]*,\s*['\"][wax]|\.write(_text|_bytes)?\(|\b(write|append)File(Sync)?\("
+    r"|\bos\.(remove|unlink|rename|replace|rmdir|removedirs|makedirs|mkdir|truncate)\b|\bshutil\.\w+"
+    r"|\b(unlink|rm|rename|copyFile|mkdir|cp)Sync\b|\.unlink\(|\.rename\(|\.rmdir\(|\.touch\("
+    r"|\[(System\.)?IO\.(File|Directory)\]::\w*(Write|Append|Delete|Move|Copy|Create|Replace)"
+    r"|\s-delete\b|\bExpand-Archive\b|\bunzip\b|\btar\s+-?[a-zA-Z]*x|\b7z\s+[xe]\b|-OutFile\b|\bwget\b|\bcurl\b[^|;&]*\s-[oO]\b)",
     re.IGNORECASE,
 )
+
+# 하네스 자기 보호: 셸 명령이 이 경로를 바꾸려 하면 확인 (경로는 소문자·슬래시로 비교)
+SELF_PATHS = (".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/local-harness",
+              ".claude/protected.txt", ".claude/readonly")
 
 
 def read_input():
@@ -100,11 +110,18 @@ def rel_to(root, path):
     return None if rel.startswith("../") or rel == ".." else rel
 
 
+def has_glob(s):
+    return any(c in s for c in "*?[")
+
+
 def matches(rel, pattern):
-    pat = pattern[2:] if pattern.startswith("./") else pattern
+    # Windows·Mac 파일 시스템은 대소문자를 구별하지 않으므로 비교도 구별하지 않는다(Input/a.txt 우회 방지)
+    rel = rel.lower()
+    pat = pattern.lower()
+    pat = pat[2:] if pat.startswith("./") else pat
     if pat.endswith("/"):
         return rel == pat[:-1] or rel.startswith(pat)
-    if fnmatch.fnmatch(rel, pat):
+    if fnmatch.fnmatchcase(rel, pat):
         return True
     # 폴더 이름만 적은 경우(예: input) 그 아래 전부
     return "/" not in pat and not any(c in pat for c in "*?[") and rel.startswith(pat + "/")
@@ -165,8 +182,8 @@ def path_forms(p):
     return forms
 
 
-def mentions_root_path(cmd, prefix, root):
-    """명령 안의 prefix가 프로젝트 맨 위 경로를 가리킬 때만 True.
+def root_path_hits(cmd, prefix, root):
+    """명령 안에서 prefix가 프로젝트 맨 위 경로를 가리키는 곳마다, 그 자리의 경로 토큰(프로젝트 기준, 소문자)을 낸다.
     '작업/던전/서버/plugins/...'처럼 다른 폴더 아래의 같은 이름은 무시한다."""
     low = cmd.lower()
     roots = [r + "/" for r in path_forms(root)]
@@ -184,12 +201,39 @@ def mentions_root_path(cmd, prefix, root):
             if need_end and j < len(low) and low[j] not in PATH_BOUNDARY:
                 continue
             before = low[:i]
-            if i == 0 or before[-1] in PATH_BOUNDARY:
-                return True
-            if before.endswith("./") and (len(before) == 2 or before[-3] in PATH_BOUNDARY):
-                return True
-            if any(before.endswith(r) for r in roots):
-                return True
+            if (i == 0 or before[-1] in PATH_BOUNDARY
+                    or (before.endswith("./") and (len(before) == 2 or before[-3] in PATH_BOUNDARY))
+                    or any(before.endswith(r) for r in roots)):
+                k = i
+                while k < len(low) and low[k] not in PATH_BOUNDARY:
+                    k += 1
+                yield low[i:k]
+
+
+def mentions_root_path(cmd, prefix, root):
+    return next(root_path_hits(cmd, prefix, root), None) is not None
+
+
+def touches_pattern(cmd, pat, root):
+    """셸 명령이 보호 패턴을 건드릴 수 있으면 True.
+    글롭이 없는 패턴(input/, 원본.pdf)은 이름이 나오기만 하면 True.
+    글롭 패턴(plugins/*.jar)은 맞는 파일, 폴더 자체(cd·mv plugins), 와일드카드(plugins/*)일 때만 True.
+    plugins/MythicMobs/config.yml 처럼 패턴에 안 맞는 다른 파일은 통과시켜 확인 창 오탐을 줄인다."""
+    prefix = literal_prefix(pat)
+    if not prefix:
+        return False
+    if not has_glob(pat):
+        return mentions_root_path(cmd, prefix, root)
+    pat_l = pat.lower()
+    pat_l = pat_l[2:] if pat_l.startswith("./") else pat_l
+    dir_part = prefix.lower().rstrip("/")
+    for tok in root_path_hits(cmd, prefix, root):
+        tok = tok[2:] if tok.startswith("./") else tok
+        for r in path_forms(root):
+            if tok.startswith(r + "/"):
+                tok = tok[len(r) + 1:]
+        if tok.rstrip("/") == dir_part or has_glob(tok) or fnmatch.fnmatchcase(tok, pat_l):
+            return True
     return False
 
 
@@ -262,12 +306,18 @@ def check_shell(command, root):
                 continue
             return ("ask", f"{label} 명령입니다. 실행해도 되는지 확인이 필요합니다.")
 
-    if not root or not MUTATING.search(command):
+    if not MUTATING.search(command):
         return None
     cmd = command.replace("\\", "/")
+    low = cmd.lower()
+    for sp in SELF_PATHS:
+        if sp in low:
+            return ("ask", f"하네스 설정·훅·보호 목록({sp})을 바꿀 수 있는 명령입니다. 확인이 필요합니다.")
+
+    if not root:
+        return None
     for pat in read_patterns(os.path.join(root, ".claude", "protected.txt")):
-        prefix = literal_prefix(pat)
-        if prefix and mentions_root_path(cmd, prefix, root):
+        if touches_pattern(cmd, pat, root):
             return ("ask", f"보호된 원본({pat})을 건드릴 수 있는 명령입니다. 원본을 바꾸지 않는지 확인이 필요합니다.")
     if os.path.isfile(os.path.join(root, ".claude", "READONLY")):
         return ("ask", "읽기 전용 모드인데 파일을 바꿀 수 있는 명령입니다. 확인이 필요합니다.")
