@@ -63,6 +63,22 @@ def main():
         expect("보호 폴더 읽기", decision(proj, "Bash", {"command": "cat input/a.txt"}), "pass")
         expect("보호 ZIP 목록 보기", decision(proj, "PowerShell", {"command": "Get-ChildItem 인계용"}), "pass")
         expect("보호 ZIP 이동", decision(proj, "PowerShell", {"command": "Move-Item 인계용\\pack.zip old\\"}), "ask")
+        # 프로젝트 맨 위 경로만 보호: 다른 폴더 아래 같은 이름은 통과
+        expect("하위 폴더의 같은 이름에 복사", decision(proj, "Bash", {"command": "mkdir -p 작업/서버/input/x && cp a.yml 작업/서버/input/x/"}), "pass")
+        expect("./ 로 보호 폴더 지정", decision(proj, "Bash", {"command": "mv ./input/a.txt b.txt"}), "ask")
+        expect("절대 경로로 보호 폴더 지정", decision(proj, "Bash", {"command": f'rm "{p("input", "a.txt")}"'}), "ask")
+        expect("따옴표 안 보호 폴더", decision(proj, "Bash", {"command": 'cp x.txt "input/a.txt"'}), "ask")
+
+        # 임시 폴더 안만 지우는 폴더 삭제는 통과
+        t = tempfile.gettempdir()
+        expect("임시 폴더 안 rm -rf", decision(proj, "Bash", {"command": f'rm -rf "{os.path.join(t, "claude", "scratch", "x")}"'}), "pass")
+        expect("임시 폴더 안 Remove-Item", decision(proj, "PowerShell", {"command": f'Remove-Item -Recurse -Force "{os.path.join(t, "zz")}"'}), "pass")
+        expect("임시 폴더 자체 삭제는 확인", decision(proj, "Bash", {"command": f'rm -rf "{t}"'}), "ask")
+        expect("임시+다른 폴더 같이 삭제는 확인", decision(proj, "Bash", {"command": f'rm -rf "{os.path.join(t, "a")}" build'}), "ask")
+        expect("임시 폴더 안이라도 보호 원본 삭제는 확인", decision(proj, "Bash", {"command": f'rm -rf "{p("input")}"'}), "ask")
+        expect("변수 경로 삭제는 확인", decision(proj, "Bash", {"command": 'rm -rf "$S/x"'}), "ask")
+        expect("상위 이동 섞인 삭제는 확인", decision(proj, "Bash", {"command": f'rm -rf "{t}/a/../../x"'}), "ask")
+        expect("임시 삭제 뒤 다른 위험 명령은 확인", decision(proj, "Bash", {"command": f'rm -rf "{os.path.join(t, "a")}" && git reset --hard'}), "ask")
 
         # H2 위험 명령 (보호 목록과 무관)
         expect("rm -rf", decision(proj, "Bash", {"command": "rm -rf build"}), "ask")

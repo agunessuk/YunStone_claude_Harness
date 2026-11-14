@@ -153,9 +153,113 @@ def check_edit(tool_input, root, cwd):
     return None
 
 
+PATH_BOUNDARY = " \t\"'=(;|&<>,"
+
+
+def path_forms(p):
+    """C:/a/b 와 Git Bash식 /c/a/b 두 가지 모양 (소문자, 슬래시)."""
+    p = p.replace("\\", "/").rstrip("/").lower()
+    forms = [p]
+    if re.match(r"^[a-z]:/", p):
+        forms.append("/" + p[0] + p[2:])
+    return forms
+
+
+def mentions_root_path(cmd, prefix, root):
+    """명령 안의 prefix가 프로젝트 맨 위 경로를 가리킬 때만 True.
+    '작업/던전/서버/plugins/...'처럼 다른 폴더 아래의 같은 이름은 무시한다."""
+    low = cmd.lower()
+    roots = [r + "/" for r in path_forms(root)]
+    pre = prefix.lower()
+    # 'input/' 은 끝 슬래시 없이 폴더 자체를 가리키는 'input' 도 본다
+    forms = [(pre, False)] + ([(pre.rstrip("/"), True)] if pre.endswith("/") and len(pre) > 1 else [])
+    for needle, need_end in forms:
+        start = 0
+        while True:
+            i = low.find(needle, start)
+            if i < 0:
+                break
+            start = i + 1
+            j = i + len(needle)
+            if need_end and j < len(low) and low[j] not in PATH_BOUNDARY:
+                continue
+            before = low[:i]
+            if i == 0 or before[-1] in PATH_BOUNDARY:
+                return True
+            if before.endswith("./") and (len(before) == 2 or before[-3] in PATH_BOUNDARY):
+                return True
+            if any(before.endswith(r) for r in roots):
+                return True
+    return False
+
+
+# 임시 폴더 안만 지우는 rm -r / Remove-Item -Recurse 는 묻지 않는다
+RECURSIVE_DELETE = re.compile(
+    r"\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b|\bRemove-Item\b[^|;]*-Recurse", re.IGNORECASE)
+PS_VALUE_FLAGS = {"-erroraction", "-ea", "-warningaction", "-include", "-exclude", "-filter"}
+
+
+def temp_dirs():
+    import tempfile
+    dirs = {tempfile.gettempdir(), os.environ.get("TEMP", ""), os.environ.get("TMP", ""), "/tmp"}
+    out = []
+    for d in dirs:
+        if d:
+            out.extend(path_forms(d))
+    return out
+
+
+def in_temp(path, temps):
+    if "$" in path or "`" in path or ".." in path.replace("\\", "/").split("/"):
+        return False  # 변수·상위 폴더 이동이 섞이면 실제 위치를 알 수 없으니 묻는다
+    p = path.replace("\\", "/").lower()
+    return any(p.startswith(t + "/") and len(p) > len(t) + 1 for t in temps)
+
+
+def delete_targets(segment):
+    import shlex
+    try:
+        toks = shlex.split(segment, posix=True)
+    except ValueError:
+        return None
+    idx = next((i for i, t in enumerate(toks) if t.lower() in ("rm", "remove-item")), None)
+    if idx is None:
+        return None
+    targets, skip = [], False
+    for t in toks[idx + 1:]:
+        if skip:
+            skip = False
+            continue
+        tl = t.lower()
+        if tl in PS_VALUE_FLAGS:
+            skip = True
+            continue
+        if t.startswith("-"):
+            continue
+        targets.append(t)
+    return targets
+
+
+def only_temp_deletes(command):
+    """명령 속 '폴더째 지우기'가 전부 임시 폴더 안의 절대 경로만 지우면 True."""
+    temps = temp_dirs()
+    segments = re.split(r"&&|\|\||[;|\n]", command)
+    found = False
+    for seg in segments:
+        if not RECURSIVE_DELETE.search(seg):
+            continue
+        found = True
+        targets = delete_targets(seg.strip())
+        if not targets or not all(in_temp(t, temps) for t in targets):
+            return False
+    return found
+
+
 def check_shell(command, root):
     for pattern, label in DANGEROUS:
         if re.search(pattern, command, re.IGNORECASE):
+            if "폴더째" in label and only_temp_deletes(command):
+                continue
             return ("ask", f"{label} 명령입니다. 실행해도 되는지 확인이 필요합니다.")
 
     if not root or not MUTATING.search(command):
@@ -163,7 +267,7 @@ def check_shell(command, root):
     cmd = command.replace("\\", "/")
     for pat in read_patterns(os.path.join(root, ".claude", "protected.txt")):
         prefix = literal_prefix(pat)
-        if prefix and prefix in cmd:
+        if prefix and mentions_root_path(cmd, prefix, root):
             return ("ask", f"보호된 원본({pat})을 건드릴 수 있는 명령입니다. 원본을 바꾸지 않는지 확인이 필요합니다.")
     if os.path.isfile(os.path.join(root, ".claude", "READONLY")):
         return ("ask", "읽기 전용 모드인데 파일을 바꿀 수 있는 명령입니다. 확인이 필요합니다.")
