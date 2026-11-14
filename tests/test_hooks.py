@@ -127,6 +127,60 @@ def main():
         expect("글롭 보호: 폴더 자체 이동은 확인", decision(proj, "Bash", {"command": "mv plugins plugins_old"}), "ask")
         expect("글롭 보호: cd 로 들어가서 jar 삭제는 확인", decision(proj, "Bash", {"command": "cd plugins && rm a.jar"}), "ask")
 
+        # v1.7 쓰는 대상 기준: 2026-11-14 실제 세션의 헛경보를 일반화한 사례
+        write(os.path.join(proj, ".claude", "protected.txt"), "# 원본\ninput/\n인계용/*.zip\n원본.pdf\nplugins/*.jar\n원본/\n")
+        tmpd = tempfile.gettempdir()
+        other = os.path.join(tmp, "다른 프로젝트")
+        expect("코드 속 한국어 글 '원본'은 통과", decision(proj, "Bash", {"command":
+            "python -I - <<'EOF'\np = 'work/note.md'\ns = open(p, encoding='utf-8').read()\n"
+            "s = s.replace('채도 0.7', '채도 0.6 (원본 채도 더 낮춤)')\nopen(p, 'w', encoding='utf-8').write(s)\nEOF"}), "pass")
+        expect("커밋 메시지 속 경로·위험 명령 글은 통과", decision(proj, "Bash", {"command":
+            "git commit -q -F - <<'EOF'\ninput/ 보호 강화, rm -rf build 는 확인, git reset --hard 도 확인\nEOF"}), "pass")
+        expect(".gitignore 에 설정 파일 이름 적기는 통과", decision(proj, "Bash", {"command":
+            "printf '%s\\n' '__pycache__/' '.claude/settings.local.json' '.claude/approvals.json' > .gitignore"}), "pass")
+        expect("다른 폴더로 cd 한 뒤의 같은 이름은 통과", decision(proj, "Bash", {"command":
+            f"cd \"{other}\" && python - <<'EOF'\nopen('input/README.md','w').write('x')\nEOF"}), "pass")
+        expect("변수로 정한 임시 폴더 삭제는 통과", decision(proj, "Bash", {"command":
+            f"S=\"{os.path.join(tmpd, 'claude', 'scratch')}\"; rm -rf \"$S/old\" \"$S/view\""}), "pass")
+        expect("jar 읽기만 하는 코드는 통과", decision(proj, "Bash", {"command":
+            "cd plugins && python -I -c \"import zipfile; z=zipfile.ZipFile('a.jar'); print(z.namelist()[:5])\""}), "pass")
+        expect("임시 폴더에 스크립트 쓰고 jar 읽기는 통과", decision(proj, "Bash", {"command":
+            f"cat > \"{os.path.join(tmpd, 'dump.py')}\" <<'EOF'\nimport sys, zipfile\nz = zipfile.ZipFile(sys.argv[1])\nEOF\n"
+            f"python -I \"{os.path.join(tmpd, 'dump.py')}\" plugins/a.jar"}), "pass")
+        expect("문자열 속 shutil.rmtree 글자는 통과", decision(proj, "Bash", {"command":
+            "python - <<'EOF'\np = 'tests/t.py'\ns = open(p).read().replace('x = 1', 'shutil.rmtree(work)')\nopen(p, 'w').write(s)\nEOF"}), "pass")
+        expect("임시 폴더 하위 정리 코드는 통과", decision(proj, "Bash", {"command":
+            "python - <<'EOF'\nimport os, shutil\nroot = r\"" + tmpd + "\"\nfor d in os.listdir(root):\n"
+            "    p = os.path.join(root, d)\n    if d.startswith('tmp'):\n        shutil.rmtree(p)\nEOF"}), "pass")
+        expect("프롬프트 글 속 rm -rf 는 통과", decision(proj, "Bash", {"command":
+            "timeout 240 claude -p \"Run exactly: rm -rf build . Then report.\""}), "pass")
+        expect("작업 파일 sed 스크립트 속 '원본'은 통과", decision(proj, "Bash", {"command":
+            "sed -i 's/사본/원본 아님/' work/a.md"}), "pass")
+        expect("임시 폴더의 시험 프로젝트 보호 목록 쓰기는 통과", decision(proj, "Bash", {"command":
+            f"P=\"{os.path.join(tmpd, 'probe', 'proj')}\"; mkdir -p \"$P/.claude\"; printf 'input/\\n' > \"$P/.claude/protected.txt\""}), "pass")
+        expect("원본 폴더에서 읽고 임시 폴더에 저장은 통과", decision(proj, "Bash", {"command":
+            f"S=\"{os.path.join(tmpd, 'crop')}\"; cd 원본 && python -I -c \"import sys\nfrom PIL import Image\n"
+            "im = Image.open(sys.argv[1])\nim.save(sys.argv[2] + '/crop_' + 'a' + '.png')\" \"지도.png\" \"$S\""}), "pass")
+        # 빈틈이 생기지 않았는지
+        expect("변수로 보호 폴더를 가리켜 삭제는 확인", decision(proj, "Bash", {"command": 'S="input"; rm "$S/a.txt"'}), "ask")
+        expect("코드에서 경로 조각으로 원본 쓰기는 확인", decision(proj, "Bash", {"command":
+            "python -c \"import os; open(os.path.join('원본', 'a.txt'), 'w').write('x')\""}), "ask")
+        expect("코드가 대상을 알 수 없게 폴더째 삭제는 확인", decision(proj, "Bash", {"command":
+            "python - <<'EOF'\nimport json, shutil\nfor d in json.load(open('list.json')):\n    shutil.rmtree(d)\nEOF"}), "ask")
+        expect("임시 폴더 안이어도 프로젝트 폴더 삭제는 확인", decision(proj, "Bash", {"command": f'rm -rf "{p("work")}"'}), "ask")
+        expect("find -exec rm -rf 는 확인", decision(proj, "Bash", {"command": "find . -name build -exec rm -rf {} +"}), "ask")
+        expect("xargs rm -rf 는 확인", decision(proj, "Bash", {"command": "ls -d */ | xargs rm -rf"}), "ask")
+        expect("bash -c 안의 보호 원본 삭제는 확인", decision(proj, "Bash", {"command": "bash -c \"rm input/a.txt\""}), "ask")
+        expect("powershell -Command 안의 보호 원본 삭제는 확인", decision(proj, "Bash", {"command":
+            "powershell -NoProfile -Command \"Remove-Item input/a.txt\""}), "ask")
+        expect("tar 를 보호 폴더에 풀기는 확인", decision(proj, "Bash", {"command": "tar -xf x.tar -C input"}), "ask")
+        expect("보호 폴더에서 unzip 은 확인", decision(proj, "Bash", {"command": "cd input && unzip ../x.zip"}), "ask")
+        expect("curl 로 보호 폴더에 내려받기는 확인", decision(proj, "Bash", {"command": "curl -L -o input/a.bin https://example.com/a"}), "ask")
+        expect("코드로 이 프로젝트 보호 목록 쓰기는 확인", decision(proj, "Bash", {"command":
+            "python -c \"open('.claude/protected.txt','w').write('')\""}), "ask")
+        expect("원본 폴더 안 파일 덮어쓰기는 확인", decision(proj, "Bash", {"command": "cp new.yml 원본/1차/a.yml"}), "ask")
+        write(os.path.join(proj, ".claude", "protected.txt"), "# 원본\ninput/\n인계용/*.zip\n원본.pdf\nplugins/*.jar\n")
+
         # 하네스 자기 보호: 셸
         expect("셸로 settings.json 덮어쓰기", decision(proj, "Bash", {"command": "echo {} > ~/.claude/settings.json"}), "ask")
         expect("PowerShell로 settings.json 쓰기", decision(proj, "PowerShell", {"command": "Set-Content $env:USERPROFILE\\.claude\\settings.json '{}'"}), "ask")
