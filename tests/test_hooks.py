@@ -71,6 +71,14 @@ def main():
         expect("./ 로 보호 폴더 지정", decision(proj, "Bash", {"command": "mv ./input/a.txt b.txt"}), "ask")
         expect("절대 경로로 보호 폴더 지정", decision(proj, "Bash", {"command": f'rm "{p("input", "a.txt")}"'}), "ask")
         expect("따옴표 안 보호 폴더", decision(proj, "Bash", {"command": 'cp x.txt "input/a.txt"'}), "ask")
+        # 오탐: 코드·글 내용 속 같은 단어 (2026-11-14 워크벤치 실행에서 발견)
+        expect("히어독 본문 속 단어는 통과", decision(proj, "Bash", {"command":
+            "cat > src/app.js <<'EOF'\nconst el = document.querySelector('input');\nEOF"}), "pass")
+        expect("python -c 코드 속 단어는 통과", decision(proj, "Bash", {"command":
+            "python -c \"open('src/a.html','w').write('<input type=text>')\""}), "pass")
+        expect("히어독이어도 대상이 보호 폴더면 확인", decision(proj, "Bash", {"command":
+            "cat > input/a.txt <<'EOF'\nhello\nEOF"}), "ask")
+        expect("따옴표 폴더 이름 단독은 확인", decision(proj, "Bash", {"command": 'rm -f "input"'}), "ask")
 
         # 우회 시도 (2026-11-14 평가에서 나온 것)
         expect("대소문자 다른 경로로 수정", decision(proj, "Edit", {"file_path": p("Input", "a.txt")}), "deny")

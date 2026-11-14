@@ -182,6 +182,34 @@ def path_forms(p):
     return forms
 
 
+WORD_END = " \t\n;|&)"
+HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*\n)(.*?)(\n\3[ \t]*(?:\n|$))", re.S)
+
+
+def strip_heredoc_bodies(cmd):
+    """cat·tee로 파일에 쓰는 히어독의 본문은 파일 내용이지 경로가 아니므로 검사에서 뺀다.
+    대상(cat > input/a.txt <<EOF)은 첫 줄에 남는다. python·node·bash로 넘기는 본문은 코드라서 그대로 검사한다."""
+    def repl(m):
+        line_start = max(cmd.rfind("\n", 0, m.start()), cmd.rfind(";", 0, m.start()),
+                         cmd.rfind("&&", 0, m.start())) + 1
+        if re.match(r"\s*(cat|tee)\b", cmd[line_start:m.start()].lstrip("& ")):
+            return m.group(1) + m.group(5).lstrip("\n")
+        return m.group(0)
+    return HEREDOC.sub(repl, cmd)
+
+
+def _standalone_word(low, i, j):
+    """low[i:j]가 셸 낱말 하나로 서 있는가: 앞뒤가 공백·명령 구분자, 또는 그 낱말만 감싼 따옴표."""
+    pre = low[i - 1] if i > 0 else " "
+    post = low[j] if j < len(low) else " "
+    if pre in "\"'":
+        if post != pre:
+            return False
+        pre = low[i - 2] if i > 1 else " "
+        post = low[j + 1] if j + 1 < len(low) else " "
+    return (pre in " \t\n;|&(=" or i == 0) and (post in WORD_END)
+
+
 def root_path_hits(cmd, prefix, root):
     """명령 안에서 prefix가 프로젝트 맨 위 경로를 가리키는 곳마다, 그 자리의 경로 토큰(프로젝트 기준, 소문자)을 낸다.
     '작업/던전/서버/plugins/...'처럼 다른 폴더 아래의 같은 이름은 무시한다."""
@@ -201,6 +229,10 @@ def root_path_hits(cmd, prefix, root):
             if need_end and j < len(low) and low[j] not in PATH_BOUNDARY:
                 continue
             before = low[:i]
+            if need_end and not any(before.endswith(r) for r in roots) and not _standalone_word(low, i, j):
+                # 슬래시 없는 폴더 이름(input)은 셸 낱말로 따로 설 때만 경로로 본다.
+                # 코드 속 querySelector('input'), <input> 같은 것은 무시 (2026-11-14 오탐)
+                continue
             if (i == 0 or before[-1] in PATH_BOUNDARY
                     or (before.endswith("./") and (len(before) == 2 or before[-3] in PATH_BOUNDARY))
                     or any(before.endswith(r) for r in roots)):
@@ -308,7 +340,7 @@ def check_shell(command, root):
 
     if not MUTATING.search(command):
         return None
-    cmd = command.replace("\\", "/")
+    cmd = strip_heredoc_bodies(command).replace("\\", "/")
     low = cmd.lower()
     for sp in SELF_PATHS:
         if sp in low:

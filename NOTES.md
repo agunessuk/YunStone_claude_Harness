@@ -24,3 +24,4 @@
 - 2026-11-13 v1: 훅 2개(guard, session_restore), 스킬 8개, 전역 CLAUDE.md, 설치기
 - 2026-11-14 v1.1: 보호 경로 검사를 프로젝트 맨 위 경로로 좁힘(하위 폴더의 같은 이름은 통과), 임시 폴더 안만 지우는 rm -r·Remove-Item -Recurse는 확인 없이 통과, 시험 41개
 - 2026-11-14 v1.2: 자체 평가에서 나온 문제 수정. 대소문자 다른 경로 우회 차단, `python -c`·`node -e`·.NET·`find -delete`·압축 풀기 쓰기 감지, 셸로 settings.json·훅·보호 목록 수정 시 확인, 글롭 보호(`plugins/*.jar`) 오탐 축소, 시험이 실제 기록 파일을 더럽히지 않게 함, `install.py --check` 점검 추가, `new-project` 스킬과 표준 폴더(templates/project → skills/new-project/template), 피드백 기록(FEEDBACK_LOG.md), 스킬 폴더 이름 통일. 시험 65개 + 틀 시험
+- 2026-11-14 v1.3: 보호 경로 오탐 축소. cat·tee 히어독 본문(파일 내용)과 코드 속 낱말('input', <input>)은 보호 폴더로 보지 않음. 쓰는 대상이 보호 폴더이거나 폴더 이름이 셸 낱말로 쓰이면 그대로 확인. 시험 69개
