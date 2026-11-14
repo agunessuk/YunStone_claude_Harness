@@ -13,7 +13,7 @@ BASE = "작업/풀어본_자료/몬스터/서버_몬스터_모델/plugins/ModelE
 # (선택) 팩 동작 키에 기본 자세가 들어 있고 공격 동작이 덮어쓰기(override)일 때:
 #   REST_FROM = "idle"      → 설계 키는 0 기준 상대값으로 쓰고, 기본 자세를 make_motion 이 더해 준다
 #   그리고 ANIMS 각 동작에 override=True
-# 해골 계열은 공격 동작이 더하기 방식이라 둘 다 쓰지 않는다. (inspect_model.py 가 어느 쪽인지 알려 준다)
+# 해골 계열은 공격 동작이 덮어쓰기지만 기본 자세가 0 이라 REST_FROM 은 필요 없다. (inspect_model.py 가 알려 준다)
 COMPARE = "attack"          # (선택) 수치 검사 때 기준으로 같이 잴 팩 원래 공격 동작
 Z = [0, 0, 0]
 
