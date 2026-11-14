@@ -1,6 +1,6 @@
 """모델 스타일 수치 (조사 노트 our_models_audit 과 같은 정의) + 아트 기준 판정.
 
-사용: python -I metrics.py <모델.bbmodel>[@배율] ... [--std 기준.json] [--json 출력.json]
+사용: python -I metrics.py <모델ID 또는 .bbmodel>[@배율] ... [--theme dark] [--std 기준.json] [--json 출력.json]
   기준 파일: --std > 작업/모델링/기준.json > art_standard.json > 스킬 templates/art_standard.json
   배율 = MythicMobs model{scale=} (없으면 1). 인게임 px/블록 = 밀도 × 16 ÷ 배율.
 출력: 모델마다 큐브 수, 키(블록), px/블록, 색 수(95%), 명도 V, 명암 폭, 노이즈, 테두리 어두움, 위밝음과
@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.dont_write_bytecode = True
 import bbtex  # noqa: E402
+import skilldeps  # noqa: E402
 
 
 def _bbpose():
@@ -116,7 +117,8 @@ def measure(path, scale=1.0, show_vfx=False):
                 at, ab = (al[:hh], al[-hh:]) if not flip else (al[-hh:], al[:hh])
                 if at.sum() >= 2 and ab.sum() >= 2:
                     grads.append((top[at].mean() - bot[ab].mean()) / max(sub[al].mean(), 0.05))
-    out = dict(file=os.path.basename(path), scale=scale, cubes=len(elems), bones=len(model.groups),
+    flipped = sum(1 for eu in elems if bbtex.is_flipped(model.elements[eu]))
+    out = dict(file=os.path.basename(path), scale=scale, cubes=len(elems) - flipped, flipped=flipped, bones=len(model.groups),
                height_blk=round(float(ext[1]), 2), max_blk=round(float(ext.max()), 2),
                px_per_unit=round(dens, 3) if dens == dens else None,
                px_per_block=round(dens * 16 / scale, 1) if dens == dens else None,
@@ -142,10 +144,18 @@ def measure(path, scale=1.0, show_vfx=False):
     return out
 
 
-def judge(r, std):
-    """기준.json 의 범위 [lo, hi] 와 비교해 벗어난 항목 목록."""
+def ranges_for(std, theme=None):
+    """기준 범위. theme='dark' 면 dark_theme_ranges 로 덮어쓴다."""
+    rg = {k: v for k, v in (std.get("ranges") or {}).items() if not k.startswith("_")}
+    if theme:
+        rg.update({k: v for k, v in (std.get(f"{theme}_theme_ranges") or {}).items() if not k.startswith("_")})
+    return rg
+
+
+def judge(r, std, theme=None):
+    """기준.json 의 범위 [lo, hi] 와 비교해 벗어난 항목 목록. theme 이 있으면 그 테마 범위로."""
     bad = []
-    for k, (lo, hi) in std.get("ranges", {}).items():
+    for k, (lo, hi) in ranges_for(std, theme).items():
         v = r.get(k)
         if v is None:
             continue
@@ -164,12 +174,15 @@ COLS = [("cubes", "큐브"), ("height_blk", "키"), ("cubes_per_blk", "큐브/�
 def main(argv):
     std_path = None
     out_json = None
+    theme = None
     items = []
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--std":
             std_path = argv[i + 1]; i += 2; continue
+        if a == "--theme":
+            theme = argv[i + 1]; i += 2; continue
         if a == "--json":
             out_json = argv[i + 1]; i += 2; continue
         items.append(a); i += 1
@@ -177,9 +190,9 @@ def main(argv):
     std, _ = skilldeps.load_std(std_path)
     rows = []
     for it in items:
-        p, _, s = it.partition("@")
-        r = measure(p, float(s) if s else 1.0)
-        r["off"] = judge(r, std)
+        sp = skilldeps.resolve(it)
+        r = measure(sp["path"], sp["scale"])
+        r["off"] = judge(r, std, theme)
         rows.append(r)
     head = "| 모델 | " + " | ".join(h for _, h in COLS) + " | 기준 밖 |"
     print(head); print("|" + "---|" * (len(COLS) + 2))

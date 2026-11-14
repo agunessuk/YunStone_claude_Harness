@@ -4,6 +4,7 @@ Blockbench 규칙을 그대로 따른다 (references/conventions.md):
 - 그룹(뼈)·큐브 회전: 도(degree), 오일러 순서 ZYX → 행렬 Rz·Ry·Rx
 - 애니메이션 회전 키프레임: 화면 값 (x, y, z) 를 기본 회전에 더하되 x·y 는 부호를 뒤집어 더한다
 - 애니메이션 위치 키프레임: x 는 부호를 뒤집고 y·z 는 그대로 더한다 (단위: 1/16 블록)
+- 애니메이션 크기(scale) 키프레임: 배율 그대로 (기본 1), 뼈 기준점에서 회전 다음에 적용
 - 보간: linear / catmullrom / step (bezier 는 linear 로 근사)
 - 파일 형식: Blockbench 4.12 이후(형식 5.0)는 outliner 에 uuid·children 만 있고 뼈 정보는 groups 에 따로 있다. 둘 다 읽는다.
 """
@@ -110,16 +111,30 @@ class Model:
             out[u] = (self._sample(self._channel(kfs, "rotation"), t), self._sample(self._channel(kfs, "position"), t))
         return out
 
+    def scales(self, anim, t):
+        """시간 t 의 뼈별 크기 배율 (scale 키가 있는 뼈만)."""
+        out = {}
+        for key, an in (anim.get("animators") or {}).items():
+            if an.get("type", "bone") != "bone":
+                continue
+            u = key if key in self.groups else self.by_name.get(an.get("name"))
+            pts = self._channel(an.get("keyframes", []), "scale")
+            if u and pts:
+                out[u] = self._sample(pts, t)
+        return out
+
     def group_mats(self, anim=None, t=0.0):
         """뼈마다 모델 공간 4×4 행렬."""
         p = self.pose(anim, t) if anim else {}
+        sc = self.scales(anim, t) if anim else {}
         mats = {}
         for u in self.order:
             g = self.groups[u]
             dr, dp = p.get(u, (np.zeros(3), np.zeros(3)))
             eul = g["rotation"] + np.array([-dr[0], -dr[1], dr[2]])
             pos = np.array([-dp[0], dp[1], dp[2]])
-            local = T(g["origin"] + pos) @ R4(rot_matrix(*eul)) @ T(-g["origin"])
+            S = np.diag(list(sc[u]) + [1.0]) if u in sc else np.eye(4)
+            local = T(g["origin"] + pos) @ R4(rot_matrix(*eul)) @ S @ T(-g["origin"])
             mats[u] = (mats[g["parent"]] @ local) if g["parent"] else local
         return mats
 

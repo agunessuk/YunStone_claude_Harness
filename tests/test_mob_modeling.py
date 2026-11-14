@@ -125,7 +125,7 @@ def test_kitbash_rules_and_output():
     assert eu in body["children"] and eu2 in body["children"]
     assert len(m["textures"]) == 2 and m["textures"][1]["uv_width"] == 16
     img = bbtex.decode_png(m["textures"][1]["source"])
-    x0, y0, x1, y1 = els[eu]["faces"]["north"]["uv"]
+    x0, y0, x1, y1 = (int(v) for v in els[eu]["faces"]["north"]["uv"])
     assert (img[y0:y1, x0:x1, 3] > 0).any(), "칠한 픽셀이 있어야 함"
     r = metrics.measure(out)
     assert r["cubes"] == 3 and abs(r["px_per_unit"] - 1.0) < 1e-6, r     # 새 부품도 같은 밀도
@@ -180,6 +180,60 @@ def test_lineup_token_and_std_fallback():
         assert "ranges" in std and "px_per_block" in std["ranges"]
     finally:
         os.chdir(cwd)
+
+
+def test_theme_ranges():
+    std = {"ranges": {"val": [0.40, 0.65]}, "dark_theme_ranges": {"val": [0.30, 0.65]}}
+    r = {"val": 0.33}
+    assert metrics.judge(r, std), "일반 범위에서는 명도 0.33 이 기준 밖"
+    assert not metrics.judge(r, std, "dark"), "어두운 테마 범위에서는 통과"
+
+
+def test_overlaps_and_flipped():
+    p = make_model(os.path.join(TMP, "o.bbmodel"), solid(16))
+    m = json.load(open(p, encoding="utf-8"))
+    dup = json.loads(json.dumps(m["elements"][0]))          # 같은 자리 같은 크기 큐브 → 모든 면이 같은 평면에서 겹침
+    dup["uuid"] = "dup"; dup["name"] = "dup"
+    flip = json.loads(json.dumps(m["elements"][0]))         # 뒤집힌 복사본 (from>to): 겹침 검사·큐브 수에서 뺀다
+    flip["uuid"] = "flip"; flip["name"] = "flip"; flip["from"], flip["to"] = flip["to"], flip["from"]
+    m["elements"] += [dup, flip]
+    m["outliner"][0]["children"] += ["dup", "flip"]
+    json.dump(m, open(p, "w", encoding="utf-8"))
+    bb = skilldeps.bbpose().Model(p)
+    ov = bbtex.overlaps(bb, bbtex.body_elements(bb))
+    assert len(ov) == 6 and all({a, b} == {"body_c", "dup"} for a, _, b, _, _ in ov), ov
+    r = metrics.measure(p)
+    assert r["cubes"] == 2 and r["flipped"] == 1, r
+    w = " ".join(lint.lint(p)["warn"])
+    assert "같은 평면" in w and "뒤집힌 큐브" in w, w
+
+
+def test_kitbash_uses_free_space_first():
+    tex = np.zeros((32, 32, 4), np.uint8)
+    tex[:16, :16] = (120, 120, 120, 255)                      # 원래 면은 왼쪽 위 16×16 안에만
+    p = make_model(os.path.join(TMP, "f.bbmodel"), tex, uv=32)
+    kit = kitbash.Kit(p, seed="free")
+    kit.material("m", "#808080")
+    kit.cube("body", [2, 0, -2], [3, 4, 2], "m", "plain", "part")
+    out = kit.save(os.path.join(TMP, "f_out.bbmodel"))
+    m = json.load(open(out, encoding="utf-8"))
+    assert len(m["textures"]) == 1, "빈 곳이 있으면 새 텍스처를 만들지 않는다"
+    img = bbtex.decode_png(m["textures"][0]["source"])
+    e = next(e for e in m["elements"] if e["name"] == "part")
+    x0, y0, x1, y1 = (int(v) for v in e["faces"]["north"]["uv"])
+    assert (img[y0:y1, x0:x1, 3] > 0).all() and not (x1 <= 16 and y1 <= 16), (x0, y0, x1, y1)
+
+
+def test_kitbash_stable_paint():
+    """같은 설계 → 같은 텍스처 (무늬 시드가 실행마다 바뀌지 않음)."""
+    src = make_model(os.path.join(TMP, "s.bbmodel"), solid(16))
+    outs = []
+    for i in range(2):
+        kit = kitbash.Kit(src, seed="same")
+        kit.material("c", "#8899aa")
+        kit.cube("body", [2, 0, -2], [4, 6, 2], "c", "cloth", "flap")
+        outs.append(json.load(open(kit.save(os.path.join(TMP, f"s_out{i}.bbmodel")), encoding="utf-8"))["textures"][-1]["source"])
+    assert outs[0] == outs[1]
 
 
 if __name__ == "__main__":

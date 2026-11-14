@@ -5,11 +5,13 @@
          [--bright 1.0] [--no-player] <모델> <모델> ...
   모델 = <모델ID 또는 .bbmodel 경로>[@배율][=이름표]
     - 모델ID 는 작업/모션/점검_원자료.json 의 파일을 먼저 쓰고, 없으면 작업/풀어본_자료 아래에서 찾는다.
-    - 배율 = MythicMobs model{scale=} (없으면 1). 이름표가 없으면 점검_원자료.json 의 몹 이름.
+    - 배율 = MythicMobs model{scale=} (없으면 1). 이름표가 없으면 모델 ID (예: skeleton_warrior=해골 전사).
   --stats : 이름표 아래에 큐브 수·색 수·명도·명암 폭·테두리 어두움을 적는다 (metrics.py 와 같은 값)
   --ppb   : 1블록 = 몇 px (모든 줄이 같은 배율 → 줄이 달라도 크기 비교가 맞다)
   --per-row: 한 줄에 세울 모델 수 (넘치면 다음 줄)
   --bright: 0.5 처럼 주면 어두운 던전 느낌 (조명 곱)
+  --yaw 28: 모델을 돌리는 각도 (0 = 정면, 90 = 옆, 180 = 뒤)
+  --back  : 줄마다 뒷모습 줄을 하나 더 (등 망토·뒤 장식 확인)
 """
 import glob, json, os, subprocess, sys, tempfile
 
@@ -25,57 +27,19 @@ def find_blender():
 
 
 def index():
-    names, files = {}, {}
-    p = os.path.join("작업", "모션", "점검_원자료.json")
-    if os.path.isfile(p):
-        d = json.load(open(p, encoding="utf-8"))
-        for dg in d.get("dungeons", []):
-            for m in dg.get("mobs", []):
-                if m.get("model") and m["model"] not in files:
-                    files[m["model"]] = m.get("file")
-                    names[m["model"]] = m.get("name")
-    return names, files
+    import skilldeps
+    return {}, skilldeps.model_index()
 
 
-def resolve(token, names, files):
-    label = None
-    if "=" in token:
-        token, label = token.split("=", 1)
-    scale = 1.0
-    if "@" in token:
-        token, s = token.rsplit("@", 1)
-        scale = float(s)
-    if os.path.isfile(token):
-        path = token
-        mid = os.path.splitext(os.path.basename(token))[0]
-    else:
-        mid = token
-        path = files.get(mid)
-        if not path or not os.path.isfile(path):
-            hits = sorted(glob.glob(os.path.join("작업", "풀어본_자료", "**", mid + ".bbmodel"), recursive=True))
-            if not hits:
-                raise SystemExit(f"모델을 찾지 못함: {mid}")
-            path = hits[0]
-    return dict(path=os.path.abspath(path), scale=scale, key=mid, label=label or names.get(mid) or mid)
+def resolve(token, names=None, files=None):
+    import skilldeps
+    return skilldeps.resolve(token, files)
 
 
-def main(argv):
-    out, title, stats, ppb, per_row, bright, player = None, "", False, 110, 6, 1.0, True
-    items, i = [], 0
-    while i < len(argv):
-        a = argv[i]
-        if a == "--out": out = argv[i + 1]; i += 2; continue
-        if a == "--title": title = argv[i + 1]; i += 2; continue
-        if a == "--ppb": ppb = float(argv[i + 1]); i += 2; continue
-        if a == "--per-row": per_row = int(argv[i + 1]); i += 2; continue
-        if a == "--bright": bright = float(argv[i + 1]); i += 2; continue
-        if a == "--stats": stats = True; i += 1; continue
-        if a == "--no-player": player = False; i += 1; continue
-        items.append(a); i += 1
-    if not out or not items:
-        raise SystemExit(__doc__)
-    names, files = index()
-    specs = [resolve(t, names, files) for t in items]
+def render(specs, out, title="", stats=False, ppb=110, per_row=6, bright=1.0, player=True, yaw=28, back=False, views=None):
+    """specs: [dict(path, scale, key, label[, pose=[동작, 초]])] → 이름표 붙인 라인업 PNG.
+    back=True 면 줄마다 뒷모습(yaw+180) 줄을 하나 더. views=[(각도, 표시), …] 로 시점을 직접 줄 수도 있다."""
+    import skilldeps
     for k, s in enumerate(specs):          # 같은 모델을 여러 번 세울 때 key 가 겹치지 않게
         if sum(1 for x in specs[:k] if x["key"] == s["key"]):
             s["key"] = f"{s['key']}#{k}"
@@ -87,24 +51,48 @@ def main(argv):
     rows = []
     for r0 in range(0, len(specs), per_row):
         row = specs[r0:r0 + per_row]
-        raw = out[:-4] + f"_raw{r0}.png"
-        import skilldeps
-        cfg = dict(models=[dict(path=s["path"], scale=s["scale"], key=s["key"]) for s in row], out=raw,
-                   px_per_blk=ppb, bright=bright, player=player, label_px=LABEL_PX,
-                   bbpose_dir=skilldeps.blender_motion_dir())
-        with tempfile.TemporaryDirectory() as td:
-            cp = os.path.join(td, "lineup.json")
-            json.dump(cfg, open(cp, "w", encoding="utf-8"), ensure_ascii=False)
-            r = subprocess.run([blender, "-b", "--factory-startup", "--python", os.path.join(HERE, "lineup_blender.py"), "--", cp],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if "LINEUP_DONE" not in r.stdout:
-            print(r.stdout[-3000:], r.stderr[-3000:])
-            raise SystemExit("렌더 실패")
-        info = json.load(open(raw + ".json", encoding="utf-8"))
-        rows.append(label_row(raw, info, row, stats))
-        os.remove(raw); os.remove(raw + ".json")
+        vlist = views or ([(yaw, ""), (yaw + 180, "뒤")] if back else [(yaw, "")])
+        for vi, (view_yaw, tag) in enumerate(vlist):
+            raw = out[:-4] + f"_raw{r0}_{vi}.png"
+            cfg = dict(models=[dict(path=s["path"], scale=s["scale"], key=s["key"], pose=s.get("pose")) for s in row],
+                       out=raw, px_per_blk=ppb, bright=bright, player=player, label_px=LABEL_PX, yaw=view_yaw,
+                       bbpose_dir=skilldeps.blender_motion_dir())
+            with tempfile.TemporaryDirectory() as td:
+                cp = os.path.join(td, "lineup.json")
+                json.dump(cfg, open(cp, "w", encoding="utf-8"), ensure_ascii=False)
+                r = subprocess.run([blender, "-b", "--factory-startup", "--python", os.path.join(HERE, "lineup_blender.py"), "--", cp],
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if "LINEUP_DONE" not in r.stdout or not os.path.isfile(raw):
+                print(r.stdout[-3000:], r.stderr[-3000:])
+                raise SystemExit("렌더 실패")
+            info = json.load(open(raw + ".json", encoding="utf-8"))
+            rows.append(label_row(raw, info, row, stats and vi == 0, tag))
+            os.remove(raw); os.remove(raw + ".json")
     stack(rows, title, out)
     print("저장:", os.path.relpath(out))
+    return out
+
+
+def main(argv):
+    out, title, stats, ppb, per_row, bright, player, yaw, back = None, "", False, 110, 6, 1.0, True, 28.0, False
+    items, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--out": out = argv[i + 1]; i += 2; continue
+        if a == "--title": title = argv[i + 1]; i += 2; continue
+        if a == "--ppb": ppb = float(argv[i + 1]); i += 2; continue
+        if a == "--per-row": per_row = int(argv[i + 1]); i += 2; continue
+        if a == "--bright": bright = float(argv[i + 1]); i += 2; continue
+        if a == "--yaw": yaw = float(argv[i + 1]); i += 2; continue
+        if a == "--back": back = True; i += 1; continue
+        if a == "--stats": stats = True; i += 1; continue
+        if a == "--no-player": player = False; i += 1; continue
+        items.append(a); i += 1
+    if not out or not items:
+        raise SystemExit(__doc__)
+    import skilldeps
+    files = skilldeps.model_index()
+    return render([skilldeps.resolve(t, files) for t in items], out, title, stats, ppb, per_row, bright, player, yaw, back)
 
 
 LABEL_PX = 210
@@ -118,8 +106,8 @@ def font(sz):
     return ImageFont.load_default()
 
 
-def label_row(raw, info, specs, stats):
-    """렌더 한 줄 + 아래 이름표 띠."""
+def label_row(raw, info, specs, stats, tag=""):
+    """렌더 한 줄 + 아래 이름표 띠. tag='뒤' 면 이름표에 (뒤) 를 붙인다."""
     from PIL import Image, ImageDraw
     im = Image.open(raw).convert("RGB")
     W, H = im.size
@@ -136,7 +124,7 @@ def label_row(raw, info, specs, stats):
             d.text((x, H + 31), "1.8칸", font=f_stat, fill=(150, 155, 165), anchor="mt")
             continue
         s = by_key[mi["key"]]
-        d.text((x, H + 6), s["label"], font=f_name, fill=(240, 240, 245), anchor="mt")
+        d.text((x, H + 6), s["label"] + (f" ({tag})" if tag else ""), font=f_name, fill=(240, 240, 245), anchor="mt")
         if stats:
             r = metrics.measure(s["path"], s["scale"])
 
