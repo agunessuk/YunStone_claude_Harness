@@ -132,6 +132,20 @@ def body_elements(model, show_vfx=False):
     return out
 
 
+def emissive_pairs(texs):
+    """본체 번호 → 발광 짝 번호 (X.png ↔ X_e.png, 같은 크기). 짝은 면이 직접 쓰지 않는 OptiFine 식 발광 층."""
+    stem = {os.path.splitext((t["name"] or "").lower())[0]: t for t in texs}
+    out = {}
+    for t in texs:
+        s = os.path.splitext((t["name"] or "").lower())[0]
+        e = stem.get(s + "_e")
+        if e is not None and e.get("img") is not None and t.get("img") is not None and e["img"].shape == t["img"].shape:
+            out[t["idx"]] = e["idx"]
+        elif e is not None and e.get("png") and t.get("png") and (e["w"], e["h"]) == (t["w"], t["h"]):
+            out[t["idx"]] = e["idx"]
+    return out
+
+
 def is_flipped(e):
     """from > to 인 축이 있는 큐브 (Blockbench 에서 안쪽 면을 보이게 하는 양면용 복사본)."""
     return any(float(e["from"][i]) > float(e["to"][i]) + 1e-9 for i in range(3))
@@ -140,6 +154,48 @@ def is_flipped(e):
 FACE_CORNERS = {"north": [(1, 1, 0), (0, 1, 0), (0, 0, 0), (1, 0, 0)], "south": [(0, 1, 1), (1, 1, 1), (1, 0, 1), (0, 0, 1)],
                 "east": [(1, 1, 1), (1, 1, 0), (1, 0, 0), (1, 0, 1)], "west": [(0, 1, 0), (0, 1, 1), (0, 0, 1), (0, 0, 0)],
                 "up": [(0, 1, 0), (1, 1, 0), (1, 1, 1), (0, 1, 1)], "down": [(0, 0, 1), (1, 0, 1), (1, 0, 0), (0, 0, 0)]}
+
+
+def _poly_area(P):
+    if len(P) < 3:
+        return 0.0
+    x, y = np.array(P)[:, 0], np.array(P)[:, 1]
+    return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+
+def _clip_area(A, B):
+    """볼록 다각형 A·B 가 겹친 넓이 (Sutherland–Hodgman). 면은 사각형이라 늘 볼록하다."""
+    def ccw(P):
+        P = [tuple(p) for p in P]
+        s = sum(P[i][0] * P[(i + 1) % len(P)][1] - P[(i + 1) % len(P)][0] * P[i][1] for i in range(len(P)))
+        return P if s > 0 else P[::-1]
+    out = ccw(A)
+    clip = ccw(B)
+    for k in range(len(clip)):
+        c0, c1 = np.array(clip[k]), np.array(clip[(k + 1) % len(clip)])
+        e = c1 - c0
+        inside = lambda q: e[0] * (q[1] - c0[1]) - e[1] * (q[0] - c0[0]) >= -1e-9          # noqa: E731
+        src, out = out, []
+        if not src:
+            break
+        for i in range(len(src)):
+            cur, prv = np.array(src[i]), np.array(src[i - 1])
+            if inside(cur):
+                if not inside(prv):
+                    out.append(tuple(_inter(prv, cur, c0, c1)))
+                out.append(tuple(cur))
+            elif inside(prv):
+                out.append(tuple(_inter(prv, cur, c0, c1)))
+    return _poly_area(out)
+
+
+def _inter(p, q, a, b):
+    d1, d2 = q - p, b - a
+    den = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(den) < 1e-12:
+        return q
+    t = ((a[0] - p[0]) * d2[1] - (a[1] - p[1]) * d2[0]) / den
+    return p + t * d1
 
 
 def overlaps(model, elems=None, min_area=0.25):
@@ -167,21 +223,30 @@ def overlaps(model, elems=None, min_area=0.25):
                 continue
             n = n / np.linalg.norm(n)
             faces.append((e.get("name", "?"), fname, n, float(n @ P[0]), P, eu))
+    # 같은 평면(법선 방향·평면 위치)끼리만 비교한다 → 큐브가 수백 개인 모델도 빠르다
+    buckets = {}
+    for f in faces:
+        n, dd = f[2], f[3]
+        key = (round(n[0], 2), round(n[1], 2), round(n[2], 2), round(dd * 20) / 20)
+        buckets.setdefault(key, []).append(f)
     out = []
-    for i in range(len(faces)):
-        ni, di, Pi = faces[i][2], faces[i][3], faces[i][4]
-        for j in range(i + 1, len(faces)):
-            if faces[j][5] == faces[i][5]:
-                continue
-            nj, dj, Pj = faces[j][2], faces[j][3], faces[j][4]
-            if ni @ nj < 0.999 or abs(di - dj) > 0.01:
-                continue
+    for grp in buckets.values():
+        if len(grp) < 2:
+            continue
+        for i in range(len(grp)):
+            ni, di, Pi = grp[i][2], grp[i][3], grp[i][4]
             u = Pi[1] - Pi[0]; u = u / np.linalg.norm(u); v = np.cross(ni, u)
-            ri = np.array([[p @ u, p @ v] for p in Pi]); rj = np.array([[p @ u, p @ v] for p in Pj])
-            w = min(ri[:, 0].max(), rj[:, 0].max()) - max(ri[:, 0].min(), rj[:, 0].min())
-            h = min(ri[:, 1].max(), rj[:, 1].max()) - max(ri[:, 1].min(), rj[:, 1].min())
-            if w > 1e-6 and h > 1e-6 and w * h >= min_area:
-                out.append((faces[i][0], faces[i][1], faces[j][0], faces[j][1], round(w * h, 2)))
+            ri = np.array([[p @ u, p @ v] for p in Pi])
+            for j in range(i + 1, len(grp)):
+                if grp[j][5] == grp[i][5]:
+                    continue
+                nj, dj, Pj = grp[j][2], grp[j][3], grp[j][4]
+                if ni @ nj < 0.999 or abs(di - dj) > 0.01:
+                    continue
+                rj = np.array([[p @ u, p @ v] for p in Pj])
+                area = _clip_area(ri, rj)
+                if area >= min_area:
+                    out.append((grp[i][0], grp[i][1], grp[j][0], grp[j][1], round(float(area), 2)))
     return out
 
 

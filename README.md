@@ -25,7 +25,7 @@ Mac: `./install.sh` (옵션 같음)
 | `hooks/` | 실제로 막거나 자동 실행하는 훅 → `~/.claude/hooks/local-harness/` |
 | `skills/new-project/` | 표준 프로젝트 틀(`template/`)과 만드는 스크립트(`scripts/new_project.py`) |
 | `skills/blender-motion/` | 몹 모션 스크립트(`scripts/`), 설계 예시(`templates/`), 좌표·설계·연결 규칙(`references/`) |
-| `skills/mob-modeling/` | 몹 모델 검사·라인업 렌더·밀도·다시 칠하기·부품 보강 스크립트(`scripts/`), 아트 기준·설계 예시(`templates/`), 기준·엔진 규칙·설계 요령(`references/`) |
+| `skills/mob-modeling/` | 몹 모델 검사·프로필·라인업 렌더·밀도·다시 칠하기·부품 보강 스크립트(`scripts/`), 기준 파일 템플릿·설계 예시(`templates/`), 1층 공통 규칙·2층 스타일 프로필·엔진 규칙·설계 요령(`references/`) |
 | `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py`, `python tests/test_blender_motion.py`, `python tests/test_mob_modeling.py` |
 
 ## 훅이 하는 일
@@ -60,7 +60,7 @@ Mac: `./install.sh` (옵션 같음)
 | `project-index` | 토큰을 아끼는 README·파일 색인 |
 | `env-and-cleanup` | Windows·Mac 함정, 서버·프로세스·파일 정리 |
 | `blender-motion` | 마인크래프트 ModelEngine 몹·보스(.bbmodel)에 Blender로 3D 모션을 만들어 넣고, MythicMobs 판정 타이밍에 연결 (Blender·numpy·Pillow 필요) |
-| `mob-modeling` | 몹·보스 모델 스타일 맞추기(텍셀 밀도·명암·테두리)와 디테일 살리기(큐브 부품 보강), ModelEngine 규칙·아트 기준 검사, 같은 축척 라인업 렌더 (`blender-motion` 함께 필요) |
+| `mob-modeling` | 몹·보스 모델 스타일 맞추기와 디테일 살리기. 기준은 2층: 1층 공통 규칙(엔진·텍셀 밀도·겹침·색 위생, 스킬 내장) + 2층 스타일 프로필(프로젝트가 고른 기준 몹에서 만듦, 여러 개). 검사·라인업 렌더·밀도·다시 칠하기·큐브 부품 보강 (`blender-motion` 함께 필요, Blender 4.x) |
 
 ## 새 프로젝트에 적용하기
 Claude에게 "새 프로젝트야, 하네스 틀 세팅해줘"라고 하면 `new-project` 스킬이 아래를 대신합니다. 직접 할 때:

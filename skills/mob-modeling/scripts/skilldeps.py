@@ -2,7 +2,10 @@
 
 - bbpose.py(뼈대 자세 계산)·make_motion.find_blender 는 blender-motion 스킬의 것을 쓴다.
   찾는 순서: 이 폴더 → 옆 스킬 폴더(../../blender-motion/scripts) → ~/.claude/skills/blender-motion/scripts
-- 아트 기준 파일: --std 로 준 것 → 현재 폴더의 작업/모델링/기준.json → art_standard.json → 이 스킬의 templates/art_standard.json
+- 아트 기준 파일(2층 구조, standard.py): --std → 환경변수 MOB_MODELING_STD → 작업/모델링/기준.json → modeling/art_standard.json
+  → art_standard.json → 이 스킬의 templates/art_standard.json (1층 기본값만, 프로필 없음)
+- 작업 폴더: 기준 파일 paths.work → 작업/모델링(있으면) → modeling
+- 모델 찾기: 기준 파일 paths.models → 작업/풀어본_자료 → 현재 폴더 아래 전체 (원본/·input/·.git 등 제외)
 """
 import json, os, sys
 
@@ -32,6 +35,27 @@ def find_blender():
         sys.path.insert(0, d)
     import make_motion
     return make_motion.find_blender()
+
+
+SKIP_DIRS = ("원본/", "input/", ".git/", "node_modules/", "__pycache__/")
+
+
+def _paths():
+    """기준 파일의 paths (없으면 빈 dict). standard.load 를 부르지 않는 가벼운 버전."""
+    p = std_path()
+    if not p:
+        return {}
+    try:
+        return json.load(open(p, encoding="utf-8")).get("paths") or {}
+    except Exception:
+        return {}
+
+
+def work_dir():
+    w = _paths().get("work")
+    if w:
+        return w
+    return os.path.join("작업", "모델링") if os.path.isdir(os.path.join("작업", "모델링")) else "modeling"
 
 
 def model_index():
@@ -66,10 +90,15 @@ def resolve(token, files=None):
         mid = token
         path = (files if files is not None else model_index()).get(mid)
         if not path or not os.path.isfile(path):
-            hits = sorted(glob.glob(os.path.join("작업", "풀어본_자료", "**", mid + ".bbmodel"), recursive=True))
+            roots = list(_paths().get("models") or []) + [os.path.join("작업", "풀어본_자료")]
+            hits = []
+            for rt in roots:
+                hits = sorted(glob.glob(os.path.join(rt, "**", mid + ".bbmodel"), recursive=True))
+                if hits:
+                    break
             if not hits:
                 hits = sorted(h for h in glob.glob(os.path.join("**", mid + ".bbmodel"), recursive=True)
-                              if not h.replace("\\", "/").startswith(("원본/", ".git/")))
+                              if not any(s in h.replace("\\", "/") + "/" for s in SKIP_DIRS))
             if not hits:
                 raise SystemExit(f"모델을 찾지 못함: {mid}")
             path = hits[0]
@@ -77,7 +106,8 @@ def resolve(token, files=None):
 
 
 def std_path(explicit=None):
-    for p in (explicit, os.path.join("작업", "모델링", "기준.json"), "art_standard.json",
+    for p in (explicit, os.environ.get("MOB_MODELING_STD"), os.path.join("작업", "모델링", "기준.json"),
+              os.path.join("modeling", "art_standard.json"), "art_standard.json",
               os.path.join(SKILL, "templates", "art_standard.json")):
         if p and os.path.isfile(p):
             return p

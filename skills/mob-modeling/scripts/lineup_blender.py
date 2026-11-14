@@ -49,8 +49,9 @@ def mc_dir(x, y, z):
 L0, L1 = mc_dir(0.2, 1.0, -0.7), mc_dir(-0.2, 1.0, 0.7)
 
 
-def mc_material(name, img=None, color=None):
-    """텍스처(또는 단색) × 마인크래프트 엔티티 조명 → 방출(Emission). 색 계산은 sRGB 공간 곱셈과 같게 f^2.2 를 곱한다."""
+def mc_material(name, img=None, color=None, img_e=None):
+    """텍스처(또는 단색) × 마인크래프트 엔티티 조명 → 방출(Emission). 색 계산은 sRGB 공간 곱셈과 같게 f^2.2 를 곱한다.
+    img_e: 발광 짝 텍스처(X_e.png) — 조명과 상관없이 그대로 더한다 (OptiFine 발광처럼 보이게)."""
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
@@ -88,7 +89,15 @@ def mc_material(name, img=None, color=None):
         sc.inputs[0].default_value = color
         alpha = None
     Lk(f, sc.inputs["Scale"])
-    Lk(sc.outputs["Vector"], em.inputs["Color"])
+    if img_e is not None:
+        te = N("ShaderNodeTexImage"); te.image = img_e; te.interpolation = "Closest"
+        ea = N("ShaderNodeVectorMath"); ea.operation = "SCALE"
+        Lk(te.outputs["Color"], ea.inputs[0]); Lk(te.outputs["Alpha"], ea.inputs["Scale"])
+        add = N("ShaderNodeVectorMath"); add.operation = "ADD"
+        Lk(sc.outputs["Vector"], add.inputs[0]); Lk(ea.outputs["Vector"], add.inputs[1])
+        Lk(add.outputs["Vector"], em.inputs["Color"])
+    else:
+        Lk(sc.outputs["Vector"], em.inputs["Color"])
     if alpha is not None:
         tr = N("ShaderNodeBsdfTransparent"); mix = N("ShaderNodeMixShader")
         Lk(alpha, mix.inputs[0]); Lk(tr.outputs[0], mix.inputs[1]); Lk(em.outputs[0], mix.inputs[2])
@@ -113,16 +122,23 @@ def build(spec, k):
     """모델 하나 → Blender 오브젝트 목록 (기본 자세 또는 지정 동작의 한 순간)."""
     M = bbpose.Model(spec["path"])
     texs = bbtex.textures(M.m, decode=False)
+    pairs = bbtex.emissive_pairs(texs)
+
+    def load_img(t):
+        if not t["png"]:
+            return None
+        pth = os.path.join(tmp, f"m{k}_t{t['idx']}.png")
+        with open(pth, "wb") as fh:
+            fh.write(t["png"])
+        return bpy.data.images.load(pth)
     mats = []
     for t in texs:
-        img = None
-        if t["png"]:
-            p = os.path.join(tmp, f"m{k}_t{t['idx']}.png")
-            with open(p, "wb") as fh:
-                fh.write(t["png"])
-            img = bpy.data.images.load(p)
-        mats.append(mc_material(f"m{k}_{t['idx']}", img) if img else None)
+        img = load_img(t)
+        img_e = load_img(texs[pairs[t["idx"]]]) if (img and t["idx"] in pairs and cfg.get("emissive", True)) else None
+        mats.append(mc_material(f"m{k}_{t['idx']}", img, img_e=img_e) if img else None)
     pose = spec.get("pose") or (cfg.get("pose") or {}).get(spec.get("key", ""))
+    if not pose and cfg.get("rest", True) and "idle" in M.animations():
+        pose = ["idle", 0.0]          # 팩이 기본 자세를 idle 에 깔아 둔 경우 인게임 모습 (bind 자세는 인게임에 안 나옴)
     anim = M.animations().get(pose[0]) if pose else None
     gm = M.group_mats(anim, float(pose[1]) if pose else 0.0)
     S = np.diag([spec.get("scale", 1.0)] * 3 + [1.0])
@@ -221,9 +237,13 @@ for spec, objs in groups:
         ob.matrix_world = R @ ob.matrix_world
 
 
+SLOTS = []      # 칸 양 끝 x (이름표가 잘리지 않게 화면 범위에 넣는다)
+
+
 def layout(slot_min):
     """앞(+Y)에서 보면 화면 오른쪽이 -X → -X 쪽으로 늘어놓는다. 칸 폭 = max(모델 폭, slot_min) + 간격."""
     cursor, out = 0.0, []
+    SLOTS.clear()
     for spec, objs in groups:
         lo, hi = bbox(objs)
         wdt = hi[0] - lo[0]
@@ -231,6 +251,7 @@ def layout(slot_min):
         move(objs, (cursor - (slot - wdt) / 2 - hi[0], -(lo[1] + hi[1]) / 2, -lo[2]))
         lo2, hi2 = bbox(objs)
         out.append((spec, objs, lo2, hi2))
+        SLOTS.append((cursor - slot, cursor))
         cursor -= slot + float(cfg.get("gap", 0.35))
     return out
 
@@ -281,6 +302,9 @@ cam.rotation_euler = fwd.to_track_quat("-Z", "Y").to_euler()
 bpy.context.view_layer.update()
 inv = cam.matrix_world.inverted()
 pts = []
+for x0, x1 in SLOTS:                     # 칸 끝도 화면 안에 (작은 몹의 긴 이름표가 잘리지 않게)
+    for x in (x0, x1):
+        pts.append(inv @ Vector((x, 0.0, 0.0)))
 for _, objs, lo, hi in placed:
     for x in (lo[0], hi[0]):
         for y in (lo[1], hi[1]):

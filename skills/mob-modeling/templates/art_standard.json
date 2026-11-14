@@ -1,25 +1,20 @@
 {
-  "_설명": "아트 기준 기본값. 프로젝트 기준 모델(서버에서 가장 자주 보이는 몹)의 수치에서 뽑는다. 이 값은 베어타이쿤 해골 3종(기존 던전 6곳에 나옴)에 맞춘 안. 프로젝트마다 작업/모델링/기준.json 으로 복사해 고친다.",
-  "_출처": "보유 몹·보스 67종 파일 수치 + Blockbench Minecraft Style Guide (references/art-standard.md)",
-  "ranges": {
-    "px_per_block": [14.4, 17.6],
-    "colors95": [10, 20],
-    "val": [0.40, 0.65],
-    "contrast": [0.15, 0.25],
-    "noise": [0.05, 0.10],
-    "edge_dark": [0.35, null],
-    "cubes_per_blk": [20, null]
+  "version": 2,
+  "_설명": "아트 기준 (mob-modeling 2층 구조). 이 파일을 프로젝트에 두고 고친다: 루트의 art_standard.json 또는 modeling/art_standard.json. 1층 common 은 비워 두면 스킬 기본값(references/common-rules.md). 2층 profiles 는 make_profile.py 로 기준 몹에서 만든다(references/style-profiles.md).",
+  "common": {
+    "_설명": "바꿀 값만 적는다. 예: 32x 텍스처 서버면 \"base_px_per_block\": 32, 보스 렌더 뼈 예산을 늘리려면 \"render_bones\": {\"보스\": 60}"
   },
-  "dark_theme_ranges": {
-    "_설명": "어두운 테마(엔드·공허·그림자) 몹은 명도만 완화. lint.py --theme dark, 설계 파일 THEME = \"dark\"",
-    "val": [0.30, 0.65]
+  "profiles": {},
+  "default_profile": null,
+  "assign": {
+    "_설명": "모델 ID → {\"profile\": 프로필, \"role\": 일반|정예|보스|소환, \"theme\": 테마}. make_profile.py --assign 으로 채운다"
   },
-  "theme_accents": {
-    "_설명": "단색 몹에 쓸 수 있는 던전 테마 포인트 색 (사용자 승인 뒤 추가). 예: \"D07\": \"#4fd8f0\""
+  "exceptions": {
+    "_설명": "모델 ID → {규칙 키: 이유·승인자·날짜}. 예: \"giant_boss\": {\"px_per_block\": \"레이드 보스, 사용자 승인 2026-11-14\"}"
   },
-  "notes": {
-    "cubes_per_blk": "사람형·갑옷형처럼 기준 모델 옆에 서는 몹에만 하한으로 쓴다. 슬라임·도깨비불처럼 단순함이 의도인 몹은 라인업으로 판정",
-    "edge_dark": "면 테두리 1px 를 한 단계 어둡게 칠한 면의 비율. 순흑 금지, 재질의 그림자색으로",
-    "px_per_block": "인게임 값 = 파일 밀도 × 16 ÷ MythicMobs model{scale}. 키 10블록 넘는 레이드 보스만 8 이상 승인 예외"
+  "paths": {
+    "_설명": "work: 결과·설계·미리보기 폴더, models: 모델 ID 로 .bbmodel 을 찾을 폴더 목록",
+    "work": "modeling",
+    "models": []
   }
 }
