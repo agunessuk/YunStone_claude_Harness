@@ -21,12 +21,16 @@ Mac: `./install.sh` (옵션 같음)
 | 위치 | 내용 |
 |---|---|
 | `global/CLAUDE.md` | 항상 적용할 원칙 → `~/.claude/CLAUDE.md` 블록 |
-| `skills/` | 필요할 때 꺼내 쓰는 절차 11개 → `~/.claude/skills/` |
+| `skills/` | 필요할 때 꺼내 쓰는 절차 18개 → `~/.claude/skills/` |
 | `hooks/` | 실제로 막거나 자동 실행하는 훅 → `~/.claude/hooks/local-harness/` |
 | `skills/new-project/` | 표준 프로젝트 틀(`template/`)과 만드는 스크립트(`scripts/new_project.py`) |
 | `skills/blender-motion/` | 몹 모션 스크립트(`scripts/`), 설계 예시(`templates/`), 좌표·설계·연결 규칙(`references/`) |
 | `skills/mob-modeling/` | 몹 모델 검사·프로필·라인업 렌더·밀도·다시 칠하기·부품 보강 스크립트(`scripts/`), 기준 파일 템플릿·설계 예시(`templates/`), 1층 공통 규칙·2층 스타일 프로필·엔진 규칙·설계 요령(`references/`) |
-| `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py`, `python tests/test_blender_motion.py`, `python tests/test_mob_modeling.py` |
+| `skills/math-textbook/` | 인디자인 수학 교재 제작 공통 기술: 흐름·인디자인 자동화·PDF 처리·수식 조판·검수(`references/`), PDF 글꼴 검사·JSX 검사·PDF 쪽 그림·인디자인 COM 실행 스크립트(`scripts/`) |
+| `skills/print-cover/` | 문구 파일 + 더블클릭으로 다시 뽑는 표지 틀(`templates/`) |
+| `skills/lan-web-app/` | 서버 PC 설치·운영, 내부망 접속 문제 해결, 화면 품질 기준(`references/`), 내부망 점검 스크립트(`scripts/lan_check.ps1`, 읽기만 함) |
+| `skills/google-drive-link/`, `skills/payment-relay/` | 구글 OAuth 설정 안내, 결제 중계 보안 점검표·비용 계산·업체 문의 틀(`references/`, `templates/`) |
+| `tests/` | 시험: `python tests/test_hooks.py`, `python tests/test_new_project.py`, `python tests/test_blender_motion.py`, `python tests/test_mob_modeling.py`, `python tests/test_math_textbook.py`, `python tests/test_skill_files.py` |
 
 ## 훅이 하는 일
 
@@ -61,6 +65,13 @@ Mac: `./install.sh` (옵션 같음)
 | `env-and-cleanup` | Windows·Mac 함정, 서버·프로세스·파일 정리 |
 | `blender-motion` | 마인크래프트 ModelEngine 몹·보스(.bbmodel)에 Blender로 3D 모션을 만들어 넣고, MythicMobs 판정 타이밍에 연결 (Blender·numpy·Pillow 필요) |
 | `mob-modeling` | 몹·보스 모델 스타일 맞추기와 디테일 살리기. 기준은 2층: 1층 공통 규칙(엔진·텍셀 밀도·겹침·색 위생, 스킬 내장) + 2층 스타일 프로필(프로젝트가 고른 기준 몹에서 만듦, 여러 개). 검사·라인업 렌더·밀도·다시 칠하기·큐브 부품 보강 (`blender-motion` 함께 필요, Blender 4.x) |
+| `math-textbook` | 인디자인으로 수학 교재·학습지 PDF 만들기의 공통 기술: 문제지 PDF 문항 자르기·줄 잇기, 원형 쪽 복제 조립, PowerShell COM으로 JSX 실행, KaTeX 수식 조판, 단원 PDF 검수(수식 글꼴 확인). 교재별 양식은 각 프로젝트 스킬에 둠 (Windows·인디자인, 추가 설치 없음) |
+| `design-drafts` | 디자인 지적이 두 번 이어지거나 기준이 없을 때 서로 다른 시안 여러 개를 한 장에 모아 번호로 고르게 하기, AI틱함 점검표 |
+| `print-cover` | 교재·학습지 앞뒤 표지: A4 낱장·인쇄소용(도련 3mm) 규격, 로고 벡터화, 문구 파일 + 더블클릭 PDF 틀 (크롬 또는 엣지 필요) |
+| `lan-web-app` | 학원·사무실 업무 웹앱(FastAPI+SQLite)을 서버 PC 한 대에서 내부망으로 운영: 개발 규칙, 화면 품질 기준, 설치본·깃헙 업데이트·숨김 실행, 다른 기기에서 안 열릴 때 |
+| `google-drive-link` | 웹앱에 구글드라이브 자료실(보기·받기·올리기·폴더) 붙이기, 일반 Gmail은 OAuth, 콘솔 설정 안내, 결과물을 드라이브 폴더에 올리기 |
+| `payment-relay` | 내부망 프로그램에 PG 결제·알림톡을 붙이는 클라우드 중계 서버 설계, 비용 계산, 보안 점검표, PG 신청·업체 문의 |
+| `claude-desktop-ops` | 원격 제어 켜기, 세션이 안 보일 때, 새 세션으로 넘기기, 끊긴 뒤 이어 하기, 새 PC 하네스 설치 함정 |
 
 ## 새 프로젝트에 적용하기
 Claude에게 "새 프로젝트야, 하네스 틀 세팅해줘"라고 하면 `new-project` 스킬이 아래를 대신합니다. 직접 할 때:
@@ -84,7 +95,7 @@ YunStone Claude 하네스를 이 컴퓨터의 Claude Code에 설치해줘.
 1. 저장소를 홈 폴더 아래 `YunStone_claude_Harness`로 받아줘 (git clone). 이미 있으면 git pull로 최신화해.
 2. README.md를 읽고 이 하네스가 무엇을 바꾸는지 짧게 설명해줘:
    - ~/.claude/CLAUDE.md 에 작업 원칙 블록 추가 (표지 주석 사이만 관리)
-   - ~/.claude/skills/ 에 공통 스킬 11개 추가
+   - ~/.claude/skills/ 에 공통 스킬 18개 추가
    - ~/.claude/hooks/local-harness/ 에 훅 2개 추가 (원본 보호·위험 명령 확인, 세션 시작 때 PROGRESS.md 복원)
    - ~/.claude/settings.json 에 훅 연결 추가 (먼저 백업)
 3. global/CLAUDE.md 내용을 보여주고, 그대로 쓸지 고칠지 물어봐줘.

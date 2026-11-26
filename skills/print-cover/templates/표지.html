@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>표지 틀</title>
+<!-- 문구는 표지문구.txt 에서 바꿉니다. 디자인을 바꿀 때만 이 파일을 고칩니다. -->
+<style>
+  /* 글꼴: fonts/ 폴더에 넣은 파일 이름으로 바꾸세요. 없으면 기본 고딕으로 찍힙니다. */
+  @font-face { font-family: "COVER"; font-weight: 500; src: url("fonts/Medium.ttf"); }
+  @font-face { font-family: "COVER"; font-weight: 700; src: url("fonts/Bold.ttf"); }
+
+  /* 판형: A4 낱장. 인쇄소용(도련 3mm)이면 216mm 303mm 로 바꾸고 아래 --bleed 를 3mm 로 */
+  @page { size: 210mm 297mm; margin: 0; }
+  :root {
+    --w: 210mm; --h: 297mm; --bleed: 0mm;
+    --bg: #F3CF20;   /* 바탕색 */
+    --ink: #1E1E1C;  /* 글자색 */
+    --max-text: 160mm; /* 긴 글을 줄일 기준 폭 */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #777; }
+  .pg {
+    position: relative; width: var(--w); height: var(--h); overflow: hidden;
+    background: var(--bg); color: var(--ink); font-family: "COVER", "Malgun Gothic", sans-serif;
+    line-height: 1; break-after: page; margin: 0 auto 8mm;
+  }
+  .pg:last-child { break-after: auto; }
+  @media print { body { background: none; } .pg { margin: 0; } }
+  .c { position: absolute; left: 0; right: 0; text-align: center; white-space: nowrap; }
+
+  /* 앞표지 위치 (위에서부터 mm, 도련이 있으면 --bleed 만큼 더해짐) */
+  #ban     { top: calc(var(--bleed) + 27mm);  font-weight: 700; font-size: 16pt; }
+  #logo    { position: absolute; left: 50%; transform: translateX(-50%); top: calc(var(--bleed) + 58mm); width: 100mm; height: 100mm; }
+  #title   { top: calc(var(--bleed) + 180mm); font-weight: 700; font-size: 46pt; letter-spacing: -.015em; }
+  #range   { top: calc(var(--bleed) + 204mm); font-weight: 500; font-size: 16pt; }
+  .academy { top: calc(var(--bleed) + 266mm); font-weight: 700; font-size: 18pt; letter-spacing: .02em; }
+
+  /* 뒤표지 */
+  #logo-b  { position: absolute; left: 50%; transform: translateX(-50%); top: calc(var(--bleed) + 118mm); width: 28mm; height: 28mm; }
+</style>
+<script src="표지문구.txt" charset="utf-8"></script>
+</head>
+<body>
+
+<!-- 로고: 아래 <symbol> 안을 학원 로고 SVG 로 바꾸세요(지금은 자리 표시 원). -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="logo-sym" viewBox="0 0 200 200">
+      <circle cx="100" cy="100" r="88" fill="none" stroke="currentColor" stroke-width="14"/>
+    </symbol>
+  </defs>
+</svg>
+
+<section class="pg" id="front">
+  <div class="c" id="ban"></div>
+  <svg id="logo" viewBox="0 0 200 200"><use href="#logo-sym"/></svg>
+  <div class="c" id="title"></div>
+  <div class="c" id="range"></div>
+  <div class="c academy"></div>
+</section>
+
+<section class="pg" id="back">
+  <svg id="logo-b" viewBox="0 0 200 200"><use href="#logo-sym"/></svg>
+  <div class="c academy"></div>
+</section>
+
+<script>
+(function () {
+  function v(name, dflt) { try { return eval("typeof " + name + " !== 'undefined' ? " + name + " : dflt"); } catch (e) { return dflt; } }
+  var T = { ban: v("반", ""), title: v("제목", ""), range: v("범위", ""), academy: v("학원명", "") };
+  document.getElementById("ban").textContent = T.ban;
+  document.getElementById("title").textContent = T.title;
+  document.getElementById("range").textContent = T.range;
+  document.querySelectorAll(".academy").forEach(function (el) { el.textContent = T.academy; });
+
+  // 글이 길면 기준 폭에 맞게 글자 크기를 줄임
+  var probe = document.createElement("div");
+  probe.style.width = getComputedStyle(document.documentElement).getPropertyValue("--max-text");
+  document.body.appendChild(probe);
+  var maxW = probe.getBoundingClientRect().width; probe.remove();
+  ["title", "range", "ban"].forEach(function (id) {
+    var el = document.getElementById(id), size = parseFloat(getComputedStyle(el).fontSize);
+    var span = document.createElement("span"); span.textContent = el.textContent;
+    el.textContent = ""; el.appendChild(span);
+    while (span.getBoundingClientRect().width > maxW && size > 8) { size -= 0.5; el.style.fontSize = size + "px"; }
+  });
+
+  // 주소 끝이 #front 또는 #back 이면 그 쪽만 남김 (PDF 를 한 장씩 뽑을 때)
+  var only = location.hash.replace("#", "");
+  if (only === "front" || only === "back") {
+    document.querySelectorAll(".pg").forEach(function (p) { if (p.id !== only) p.remove(); });
+  }
+})();
+</script>
+</body>
+</html>
